@@ -389,12 +389,13 @@ export default function LandingPage(): ReactElement {
       </ContentContainer>
 
       <LoadPromptContainer>
-        <h2 style={{ margin: 0 }}>Load a dataset below or your own data to get started.</h2>
+        <h2 style={{ margin: 0 }}>Load your own data to get started.</h2>
       </LoadPromptContainer>
 
-      <ContentContainer style={{ paddingBottom: "400px" }}>
+
+      {/* <ContentContainer style={{ paddingBottom: "400px" }}>
         <ProjectList>{landingPageContent.map(renderProject)}</ProjectList>
-      </ContentContainer>
+      </ContentContainer> */}
 
       <ContentContainer style={{ padding: "0 30px 40px 30px" }}>
         <Divider />

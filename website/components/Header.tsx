@@ -86,7 +86,7 @@ function HeaderLogo({ noNavigate }: { noNavigate?: boolean }): ReactElement {
         rel="noopener noreferrer"
         target={noNavigate ? "_blank" : undefined}
       >
-        <h1>Vol-E</h1>
+        <h1>Volume Explorer</h1>
       </HeaderTitleLink>
     </FlexRowAlignCenter>
   );
@@ -109,7 +109,7 @@ const HeaderContainer = styled(FlexRowAlignCenter)`
   width: auto;
   height: fit-content;
   min-height: var(--header-content-height);
-  padding: 12px 20px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--color-header-border);
   gap: 10px;
   position: sticky;

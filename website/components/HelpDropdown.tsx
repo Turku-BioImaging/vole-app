@@ -21,7 +21,7 @@ export default function HelpDropdown(): ReactElement {
     {
       key: "github",
       label: (
-        <Link to="https://github.com/allen-cell-animated/vole-app" target="_blank" rel="noreferrer noopener">
+        <Link to="https://https://github.com/Turku-BioImaging/vole-app" target="_blank" rel="noreferrer noopener">
           Visit GitHub repository
         </Link>
       ),
@@ -30,7 +30,7 @@ export default function HelpDropdown(): ReactElement {
       key: "github-issue",
       label: (
         <Link
-          to="https://github.com/allen-cell-animated/vole-app/issues/new/choose"
+          to="https://github.com/Turku-BioImaging/vole-app/issues/new/choose"
           target="_blank"
           rel="noreferrer noopener"
         >
@@ -38,14 +38,14 @@ export default function HelpDropdown(): ReactElement {
         </Link>
       ),
     },
-    {
-      key: "forum",
-      label: (
-        <Link to="https://forum.allencell.org/c/software-code/11" target="_blank" rel="noreferrer noopener">
-          Allen Cell Discussion Forum
-        </Link>
-      ),
-    },
+    // {
+    //   key: "forum",
+    //   label: (
+    //     <Link to="https://forum.allencell.org/c/software-code/11" target="_blank" rel="noreferrer noopener">
+    //       Allen Cell Discussion Forum
+    //     </Link>
+    //   ),
+    // },
     {
       key: "version",
       label: "Version info",
