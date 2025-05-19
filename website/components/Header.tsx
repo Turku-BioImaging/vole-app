@@ -73,8 +73,8 @@ const VerticalDivider = styled.div`
 function HeaderLogo({ noNavigate }: { noNavigate?: boolean }): ReactElement {
   return (
     <FlexRowAlignCenter>
-      <AicsLogoLink href="https://www.allencell.org/" rel="noopener noreferrer" target="_blank">
-        <div title={"https://www.allencell.org"}>
+      <AicsLogoLink href="https://bioimaging.fi/" rel="noopener noreferrer" target="_blank">
+        <div title={"https://bioimaging.fi"}>
           <AicsLogoSVG />
           <AicsLogoAndNameSVG />
         </div>
