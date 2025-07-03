@@ -62,7 +62,7 @@ type TfEditorProps = {
   useControlPoints: boolean;
   controlPoints: ControlPoint[];
   ramp: [number, number];
-  lockPlotToDataRange: boolean;
+  plotMin: number;
   plotMax: number;
 };
 
@@ -110,15 +110,15 @@ const sliderHandleSymbol: d3.SymbolType = {
   },
 };
 
-function u8ToAbsolute(value: number, channel: Channel): number {
+function u8ToAbsolute(value: number, channel: { rawMin: number; rawMax: number }): number {
   return channel.rawMin + (value / 255) * (channel.rawMax - channel.rawMin);
 }
 
-function absoluteToU8(value: number, channel: Channel): number {
+function absoluteToU8(value: number, channel: { rawMin: number; rawMax: number }): number {
   return ((value - channel.rawMin) / (channel.rawMax - channel.rawMin)) * 255;
 }
 
-function controlPointToAbsolute(cp: ControlPoint, channel: Channel): number {
+function controlPointToAbsolute(cp: ControlPoint, channel: { rawMin: number; rawMax: number }): number {
   // the x value of the control point is in the range [0, 255]
   // because of the way the histogram is generated
   // (see LUT_ENTRIES and the fact that we use Uint8Array)
@@ -235,7 +235,7 @@ const numberFormatter = (v: number | string | undefined): string => (v === undef
 const clamp = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max);
 
 const TfEditor: React.FC<TfEditorProps> = (props) => {
-  const { changeChannelSetting } = props;
+  const { changeChannelSetting, plotMin, plotMax } = props;
 
   const innerWidth = props.width - TFEDITOR_MARGINS.left - TFEDITOR_MARGINS.right;
   const innerHeight = props.height - TFEDITOR_MARGINS.top - TFEDITOR_MARGINS.bottom;
@@ -260,18 +260,17 @@ const TfEditor: React.FC<TfEditorProps> = (props) => {
 
   const svgRef = useRef<SVGSVGElement>(null); // need access to SVG element to measure mouse position
 
-  const { rawMin, rawMax, dtype } = props.channelData;
+  const { rawMin, rawMax, dtype, histogram } = props.channelData;
   const typeRange = DTYPE_RANGE[dtype];
 
   // d3 scales define the mapping between data and screen space (and do the heavy lifting of generating plot axes)
   /** `xScale` is in raw intensity range, not U8 range. We use `u8ToAbsolute` and `absoluteToU8` to translate to U8. */
-  const [xScale, plotMinU8, plotMaxU8] = useMemo(() => {
-    const domain = props.lockPlotToDataRange ? [rawMin, rawMax] : [typeRange.min, props.plotMax];
-    const scale = d3.scaleLinear().domain(domain).range([0, innerWidth]);
-    const plotMinU8 = absoluteToU8(domain[0], props.channelData);
-    const plotMaxU8 = absoluteToU8(domain[1], props.channelData);
-    return [scale, plotMinU8, plotMaxU8];
-  }, [innerWidth, rawMin, rawMax, typeRange, props.lockPlotToDataRange, props.plotMax]);
+  const xScale = useMemo(
+    () => d3.scaleLinear().domain([plotMin, plotMax]).range([0, innerWidth]),
+    [innerWidth, plotMin, plotMax]
+  );
+  const plotMinU8 = useMemo(() => absoluteToU8(plotMin, { rawMin, rawMax }), [plotMin, rawMin, rawMax]);
+  const plotMaxU8 = useMemo(() => absoluteToU8(plotMax, { rawMin, rawMax }), [plotMax, rawMin, rawMax]);
   const yScale = useMemo(() => d3.scaleLinear().domain([0, 1]).range([innerHeight, 0]), [innerHeight]);
 
   const mouseEventToControlPointValues = (event: MouseEvent | React.MouseEvent): [number, number] => {
@@ -422,12 +421,12 @@ const TfEditor: React.FC<TfEditorProps> = (props) => {
   const areaPath = useMemo(() => {
     const areaGenerator = d3
       .area<ControlPoint>()
-      .x((d) => xScale(controlPointToAbsolute(d, props.channelData)))
+      .x((d) => xScale(controlPointToAbsolute(d, { rawMin, rawMax })))
       .y0((d) => yScale(d.opacity))
       .y1(innerHeight)
       .curve(d3.curveLinear);
     return areaGenerator(controlPointsToRender) ?? undefined;
-  }, [controlPointsToRender, xScale, yScale, innerHeight]);
+  }, [controlPointsToRender, xScale, yScale, innerHeight, rawMin, rawMax]);
 
   /** d3-generated svg data string representing the "basic mode" min/max slider handles */
   const sliderHandlePath = useMemo(() => d3.symbol().type(sliderHandleSymbol).size(80)() ?? undefined, []);
@@ -478,11 +477,11 @@ const TfEditor: React.FC<TfEditorProps> = (props) => {
       if (el === null) {
         return;
       }
-      const numBins = props.channelData.histogram.getNumBins();
+      const numBins = histogram.getNumBins();
       if (numBins < 1) {
         return;
       }
-      const { binLengths, max } = getHistogramBinLengths(props.channelData.histogram);
+      const { binLengths, max } = getHistogramBinLengths(histogram);
       const start = Math.max(0, Math.ceil(plotMinU8));
       const end = Math.min(numBins, Math.floor(plotMaxU8));
       const binLengthsToRender = binLengths.slice(start, end);
@@ -496,30 +495,32 @@ const TfEditor: React.FC<TfEditorProps> = (props) => {
         .join("rect") // ensure we have exactly as many bound `rect` elements in the DOM as we have histogram bins
         .attr("class", "bar")
         .attr("width", barWidth)
-        .attr("x", (_len, idx) => xScale(u8ToAbsolute(idx + start, props.channelData))) // set position and height from data
+        .attr("x", (_len, idx) => xScale(u8ToAbsolute(idx + start, { rawMin, rawMax }))) // set position and height from data
         .attr("y", (len) => binScale(len))
         .attr("height", (len) => innerHeight - binScale(len));
     },
-    [xScale, props.channelData, props.channelData.histogram, innerWidth, innerHeight, plotMinU8, plotMaxU8]
+    [xScale, rawMin, rawMax, histogram, innerWidth, innerHeight, plotMinU8, plotMaxU8]
   );
 
   const applyTFGenerator = useCallback(
     (generator: string): void => {
       setSelectedPointIdx(null);
       lastColorRef.current = TFEDITOR_DEFAULT_COLOR;
-      const lut = TF_GENERATORS[generator](props.channelData.histogram);
+      const lut = TF_GENERATORS[generator](histogram);
       if (props.useControlPoints) {
         setControlPoints(lut.controlPoints.map((cp) => ({ ...cp, color: TFEDITOR_DEFAULT_COLOR })));
       } else {
         setRamp(controlPointsToRamp(lut.controlPoints));
       }
     },
-    [props.channelData.histogram, props.useControlPoints]
+    [histogram, props.useControlPoints, setControlPoints, setRamp]
   );
 
   const createTFGeneratorButton = (generator: string, name: string, description: string): React.ReactNode => (
     <Tooltip title={description} placement="top">
-      <Button onClick={() => applyTFGenerator(generator)}>{name}</Button>
+      <Button size="small" onClick={() => applyTFGenerator(generator)}>
+        {name}
+      </Button>
     </Tooltip>
   );
 
@@ -540,7 +541,7 @@ const TfEditor: React.FC<TfEditorProps> = (props) => {
           />
         ))
     : null;
-  // move selected control point to the end so it's not occluded by other nearby points
+  // move selected control point to the end so it's drawn last and not occluded by other nearby points
   if (controlPointCircles !== null && selectedPointIdx !== null) {
     controlPointCircles.push(controlPointCircles.splice(selectedPointIdx, 1)[0]);
   }
@@ -551,10 +552,10 @@ const TfEditor: React.FC<TfEditorProps> = (props) => {
     <div>
       {/* ----- PRESET BUTTONS ----- */}
       <div className="button-row">
-        {createTFGeneratorButton("resetXF", "None", "Reset transfer function to full range.")}
-        {createTFGeneratorButton("auto98XF", "Default", "Ramp from 50th percentile to 98th.")}
-        {createTFGeneratorButton("auto2XF", "IJ Auto", `Emulates ImageJ's "auto" button.`)}
-        {createTFGeneratorButton("bestFitXF", "Auto 2", "Ramp over the middle 80% of data.")}
+        {createTFGeneratorButton("auto98XF", "Default", "Ramp from 50th percentile to 98th")}
+        {createTFGeneratorButton("auto2XF", "IJ Auto", `Emulates ImageJ's "auto" button`)}
+        {createTFGeneratorButton("resetXF", "Auto 1", "Ramp over the full data range (0% to 100%)")}
+        {createTFGeneratorButton("bestFitXF", "Auto 2", "Ramp over the middle 80% of data")}
         <Checkbox
           checked={props.useControlPoints}
           onChange={(e) => changeChannelSetting({ useControlPoints: e.target.checked })}
@@ -567,7 +568,7 @@ const TfEditor: React.FC<TfEditorProps> = (props) => {
       {/* ----- MIN/MAX SPINBOXES ----- */}
       {!props.useControlPoints && (
         <div className="tf-editor-control-row ramp-row">
-          Ramp min/max
+          Levels min/max
           <InputNumber
             value={u8ToAbsolute(props.ramp[0], props.channelData)}
             onChange={(v) => v !== null && setRamp([absoluteToU8(v, props.channelData), props.ramp[1]])}
@@ -662,28 +663,35 @@ const TfEditor: React.FC<TfEditorProps> = (props) => {
 
       {/* ----- PLOT RANGE ----- */}
       <div className="tf-editor-control-row plot-range-row">
-        <span>
-          <Checkbox
-            checked={props.lockPlotToDataRange}
-            onChange={(e) => changeChannelSetting({ lockPlotToDataRange: e.target.checked })}
-          >
-            Lock to data range
-          </Checkbox>
-        </span>
-        {!props.lockPlotToDataRange && (
-          <span>
-            Plot max{" "}
-            <InputNumber
-              value={props.plotMax}
-              onChange={(v) => v !== null && changeChannelSetting({ plotMax: v })}
-              formatter={numberFormatter}
-              min={typeRange.min}
-              max={typeRange.max}
-              size="small"
-              controls={false}
-            />
-          </span>
-        )}
+        Plot min/max
+        <InputNumber
+          value={plotMin}
+          onChange={(v) => v !== null && changeChannelSetting({ plotMin: v, plotMax: Math.max(v + 1, plotMax) })}
+          formatter={numberFormatter}
+          min={typeRange.min}
+          max={typeRange.max - 1}
+          size="small"
+          controls={false}
+        />
+        <InputNumber
+          value={plotMax}
+          onChange={(v) => v !== null && changeChannelSetting({ plotMax: v, plotMin: Math.min(v - 1, plotMin) })}
+          formatter={numberFormatter}
+          min={typeRange.min + 1}
+          max={typeRange.max}
+          size="small"
+          controls={false}
+        />
+        <Button
+          size="small"
+          style={{ marginLeft: "12px" }}
+          onClick={() => changeChannelSetting({ plotMin: rawMin, plotMax: rawMax })}
+        >
+          Fit to data
+        </Button>
+        <Button size="small" onClick={() => changeChannelSetting({ plotMin: typeRange.min, plotMax: typeRange.max })}>
+          Full range
+        </Button>
       </div>
 
       {/* ----- COLORIZE SLIDER ----- */}
