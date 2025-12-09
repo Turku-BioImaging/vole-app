@@ -1,4 +1,4 @@
-import { VolumeLoadError, VolumeLoadErrorType } from "@aics/vole-core";
+import { type VolumeLoadError, VolumeLoadErrorType } from "@aics/vole-core";
 import { RightOutlined } from "@ant-design/icons";
 import { Alert, Button } from "antd";
 import React from "react";
@@ -68,7 +68,8 @@ const ERROR_TYPE_DESCRIPTIONS: { [T in VolumeLoadErrorType]: React.ReactNode } =
   ),
 };
 
-const getErrorTitle = (error: unknown): string => (error instanceof Error && error.toString?.()) || "Unknown error";
+const getErrorTitle = (error: unknown): string =>
+  (error instanceof Error && error.toString?.()) || (typeof error === "string" && error) || "Unknown error";
 
 const getErrorDescription = (error: unknown): React.ReactNode => {
   const type: VolumeLoadErrorType | undefined = (error as VolumeLoadError).type;

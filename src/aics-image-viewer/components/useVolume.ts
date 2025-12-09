@@ -1,4 +1,4 @@
-import { LoadSpec, RawArrayLoaderOptions, View3d, Volume, VolumeLoaderContext } from "@aics/vole-core";
+import { LoadSpec, type RawArrayLoaderOptions, type View3d, type Volume, VolumeLoaderContext } from "@aics/vole-core";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Box3, Vector3 } from "three";
 
@@ -10,17 +10,19 @@ import {
   QUEUE_MAX_SIZE,
 } from "../shared/constants";
 import { ViewMode } from "../shared/enums";
-import { AxisName } from "../shared/types";
+import type { AxisName } from "../shared/types";
 import { useConstructor, useRefWithSetter } from "../shared/utils/hooks";
 import PlayControls from "../shared/utils/playControls";
 import SceneStore from "../shared/utils/sceneStore";
-import { ChannelGrouping, getDisplayName, makeChannelIndexGrouping } from "../shared/utils/viewerChannelSettings";
+import { type ChannelGrouping, getDisplayName, makeChannelIndexGrouping } from "../shared/utils/viewerChannelSettings";
 import { initializeOneChannelSetting } from "../shared/utils/viewerState";
-import { ChannelState } from "./ViewerStateProvider/types";
+import type { ChannelState } from "./ViewerStateProvider/types";
 
 import { ViewerStateContext } from "./ViewerStateProvider";
 
 export type UseVolumeOptions = {
+  /** Callback for when the volume is created. */
+  onCreateImage?: (image: Volume) => void;
   /** Callback for when a single channel of the volume has loaded. */
   onChannelLoaded?: (image: Volume, channelIndex: number, isInitialLoad: boolean) => void;
   /** Callback for when image loading encounters an error. */
@@ -96,6 +98,7 @@ const useVolume = (
   const viewerStateRef = useContext(ViewerStateContext).ref;
   const onErrorRef = useEffectEventRef(options?.onError);
   const onChannelLoadedRef = useEffectEventRef(options?.onChannelLoaded);
+  const onCreateImageRef = useEffectEventRef(options?.onCreateImage);
   const maskChannelName = options?.maskChannelName;
 
   // set up our big objects: the image, its loading infrastructure, and controls for playback
@@ -243,6 +246,8 @@ const useVolume = (
       setChannelVersions(new Array(channelNames.length).fill(CHANNEL_INITIAL_LOAD));
       setImage(aimg);
 
+      onCreateImageRef.current?.(aimg);
+
       playControls.stepAxis = (axis: AxisName | "t") => {
         const { time, slice } = viewerStateRef.current;
         if (axis === "t") {
@@ -294,6 +299,7 @@ const useVolume = (
   }, [
     sceneLoader,
     onError,
+    onCreateImageRef,
     onChannelLoadedRef,
     viewerStateRef,
     channelVersionsRef,

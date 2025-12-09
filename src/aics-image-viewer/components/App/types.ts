@@ -1,5 +1,5 @@
 import type { RawArrayData, RawArrayInfo, View3d, Volume } from "@aics/vole-core";
-import { MutableRefObject } from "react";
+import type { MutableRefObject } from "react";
 
 import type { MetadataRecord } from "../../shared/types";
 import type { ViewerChannelSettings } from "../../shared/utils/viewerChannelSettings";
@@ -69,4 +69,6 @@ export interface AppProps {
   view3dRef?: MutableRefObject<View3d | null>;
   metadataFormatter?: (metadata: MetadataRecord) => MetadataRecord;
   onControlPanelToggle?: (collapsed: boolean) => void;
+  showError?: (error: any) => void;
+  onImageTitleChange?: (title: string | undefined) => void;
 }

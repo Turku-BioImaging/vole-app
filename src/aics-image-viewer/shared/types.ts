@@ -1,4 +1,4 @@
-import { CSSProperties } from "react";
+import type { CSSProperties } from "react";
 
 import { ViewMode } from "./enums";
 
@@ -17,3 +17,8 @@ export type Styles = { [key: string]: CSSProperties };
 
 export type MetadataEntry = string | number | boolean | MetadataRecord | MetadataEntry[] | null | undefined;
 export type MetadataRecord = { [key: string]: MetadataEntry };
+
+export type ManifestJson = {
+  scenes?: string | (string | string[])[];
+  meta?: MetadataRecord[];
+};

@@ -1,10 +1,10 @@
 import React from "react";
 
 import { ViewMode } from "../../../src";
-import { AppDataProps, ProjectEntry } from "../../types";
+import type { AppDataProps, ProjectEntry } from "../../types";
 import { ExternalLink } from "./utils";
 
-const nucmorphBaseViewerSettings: Partial<AppDataProps> = {
+const NUCMORPH_BASE_SETTINGS: Partial<AppDataProps> = {
   viewerChannelSettings: {
     maskChannelName: "",
     groups: [
@@ -24,7 +24,7 @@ const nucmorphBaseViewerSettings: Partial<AppDataProps> = {
   },
 };
 
-export const landingPageContent: ProjectEntry[] = [
+export const LANDING_PAGE_CONTENT: ProjectEntry[] = [
   {
     name: "hiPSC FOV-nuclei timelapse datasets",
     inReview: false,
@@ -59,8 +59,9 @@ export const landingPageContent: ProjectEntry[] = [
           cellId: "",
           imageDownloadHref: "",
           parentImageDownloadHref: "",
-          ...nucmorphBaseViewerSettings,
+          ...NUCMORPH_BASE_SETTINGS,
         },
+        hideTitle: true,
       },
       {
         name: "Medium colony",
@@ -76,8 +77,9 @@ export const landingPageContent: ProjectEntry[] = [
           cellId: "",
           imageDownloadHref: "",
           parentImageDownloadHref: "",
-          ...nucmorphBaseViewerSettings,
+          ...NUCMORPH_BASE_SETTINGS,
         },
+        hideTitle: true,
       },
       {
         name: "Large colony",
@@ -93,8 +95,9 @@ export const landingPageContent: ProjectEntry[] = [
           cellId: "",
           imageDownloadHref: "",
           parentImageDownloadHref: "",
-          ...nucmorphBaseViewerSettings,
+          ...NUCMORPH_BASE_SETTINGS,
         },
+        hideTitle: true,
       },
     ],
   },

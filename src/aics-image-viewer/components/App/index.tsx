@@ -1,5 +1,6 @@
 // 3rd Party Imports
-import { RawArrayLoaderOptions, RENDERMODE_PATHTRACE, RENDERMODE_RAYMARCH, View3d, Volume } from "@aics/vole-core";
+import { RENDERMODE_PATHTRACE, RENDERMODE_RAYMARCH, View3d } from "@aics/vole-core";
+import type { RawArrayLoaderOptions, Volume } from "@aics/vole-core";
 import { Layout } from "antd";
 import { debounce, isEqual } from "lodash";
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -14,7 +15,8 @@ import {
   SCALE_BAR_MARGIN_DEFAULT,
 } from "../../shared/constants";
 import { ImageType, RenderMode, ViewMode } from "../../shared/enums";
-import { activeAxisMap, AxisName, IsosurfaceFormat, MetadataRecord, PerAxis } from "../../shared/types";
+import type { AxisName, IsosurfaceFormat, MetadataRecord, PerAxis } from "../../shared/types";
+import { activeAxisMap } from "../../shared/types";
 import { colorArrayToFloats } from "../../shared/utils/colorRepresentations";
 import {
   controlPointsToRamp,
@@ -29,6 +31,7 @@ import {
   densitySliderToImageValue,
   gammaSliderToImageValues,
 } from "../../shared/utils/sliderValuesToImageValues";
+import { findFirstChannelMatch } from "../../shared/utils/viewerChannelSettings";
 import useVolume, { ImageLoadStatus } from "../useVolume";
 import type { AppProps, ControlVisibilityFlags, MultisceneUrls, UseImageEffectType } from "./types";
 
@@ -83,6 +86,7 @@ const defaultProps: AppProps = {
   pixelSize: undefined,
   canvasMargin: "0 0 0 0",
   view3dRef: undefined,
+  showError: undefined,
 };
 
 const CLIPPING_PANEL_ANIMATION_DURATION_MS = 300;
@@ -139,7 +143,7 @@ const App: React.FC<AppProps> = (props) => {
     getChannelsAwaitingReset,
     onResetChannel,
   } = viewerState.current;
-  const { onControlPanelToggle, metadata, metadataFormatter } = props;
+  const { onControlPanelToggle, onImageTitleChange, metadata, metadataFormatter } = props;
 
   useMemo(() => {
     if (props.viewerChannelSettings) {
@@ -152,7 +156,10 @@ const App: React.FC<AppProps> = (props) => {
     props.view3dRef.current = view3d;
   }
 
-  const [errorAlert, showError] = useErrorAlert();
+  // Allows AppWrapper to pass in its own `useErrorAlert` callbacks, but still keeps error
+  // messaging when App is used standalone.
+  const [errorAlert, _showError] = useErrorAlert();
+  const showError = props.showError ?? _showError;
 
   useEffect(() => {
     // Get notifications of loading errors which occur after the initial load, e.g. on time change or new channel load
@@ -186,26 +193,84 @@ const App: React.FC<AppProps> = (props) => {
   // we need to keep track of channel ranges for remapping control points
   const channelRangesRef = useRef<([number, number] | undefined)[]>([]);
 
+  const onCreateImage = useCallback(
+    (newImage: Volume): void => {
+      if (newImage === null) {
+        return;
+      }
+
+      const { channelNames } = newImage;
+      channelRangesRef.current = new Array(channelNames.length).fill(undefined);
+
+      const { channelSettings } = viewerState.current;
+
+      // If the image has channel color metadata, apply those colors now
+      const viewerChannelSettings = getCurrentViewerChannelSettings();
+      const channelColorMeta = newImage.imageInfo.channelColors?.map((color, index) => {
+        // Filter out channels that have colors in `viewerChannelSettings`
+        if (viewerChannelSettings === undefined) {
+          return color;
+        }
+        const settings = findFirstChannelMatch(channelNames[index], index, viewerChannelSettings);
+        if (settings?.color !== undefined) {
+          return undefined;
+        } else {
+          return color;
+        }
+      });
+      if (Array.isArray(channelColorMeta)) {
+        channelColorMeta.forEach((color, index) => {
+          if (Array.isArray(color) && index < channelNames.length) {
+            changeChannelSetting(index, { color });
+          }
+        });
+      }
+
+      view3d.addVolume(newImage, {
+        // Immediately passing down channel parameters isn't strictly necessary, but keeps things looking consistent on load
+        channels: newImage.channelNames.map((name, index) => {
+          // TODO do we really need to be searching by name here?
+          const ch = channelSettings.find((channel) => channel.name === name);
+          if (!ch) {
+            return {};
+          }
+          return {
+            enabled: ch.volumeEnabled,
+            isosurfaceEnabled: ch.isosurfaceEnabled,
+            isovalue: ch.isovalue,
+            isosurfaceOpacity: ch.opacity,
+            color: channelColorMeta?.[index] ?? ch.color,
+          };
+        }),
+      });
+
+      onImageTitleChange?.(newImage.imageInfo.imageInfo.name);
+      view3d.updateActiveChannels(newImage);
+    },
+    [view3d, viewerState, onImageTitleChange, changeChannelSetting, getCurrentViewerChannelSettings]
+  );
+
   const onChannelLoaded = useCallback(
     (image: Volume, channelIndex: number, isInitialLoad: boolean): void => {
       // TODO this was once a search by name - is that still necessary or will the index always be correct?
       const thisChannelSettings = channelSettings[channelIndex];
       const { getChannelsAwaitingResetOnLoad, getCurrentViewerChannelSettings, changeChannelSetting } =
         viewerState.current;
-      const { ramp, controlPoints } = thisChannelSettings;
       const thisChannel = image.getChannel(channelIndex);
+      const noLut = !thisChannelSettings || !thisChannelSettings.controlPoints || !thisChannelSettings.ramp;
 
-      if (isInitialLoad || !controlPoints || !ramp || getChannelsAwaitingResetOnLoad().has(channelIndex)) {
+      if (isInitialLoad || noLut || getChannelsAwaitingResetOnLoad().has(channelIndex)) {
         // This channel needs its LUT initialized
         const { ramp, controlPoints } = initializeLut(image, channelIndex, getCurrentViewerChannelSettings());
-        const { dtype } = thisChannel;
+        const range = DTYPE_RANGE[thisChannel.dtype];
 
         changeChannelSetting(channelIndex, {
           controlPoints: controlPoints,
           ramp: controlPointsToRamp(ramp),
           // set the default range of the transfer function editor to cover the full range of the data type
-          plotMin: DTYPE_RANGE[dtype].min,
-          plotMax: DTYPE_RANGE[dtype].max,
+          plotMin: range.min,
+          plotMax: range.max,
+          isovalue: range.min + (range.max - range.min) / 2,
         });
       } else {
         // This channel has already been initialized, but its LUT was just remapped and we need to update some things
@@ -235,7 +300,6 @@ const App: React.FC<AppProps> = (props) => {
       view3d.updateLuts(image);
       view3d.onVolumeData(image, [channelIndex]);
 
-      view3d.setVolumeChannelEnabled(image, channelIndex, thisChannelSettings.volumeEnabled);
       if (image.channelNames[channelIndex] === maskChannelName) {
         view3d.setVolumeChannelAsMask(image, channelIndex);
       }
@@ -246,40 +310,21 @@ const App: React.FC<AppProps> = (props) => {
     [view3d, channelSettings, maskChannelName, viewerState]
   );
 
-  const volume = useVolume(scenes, { onChannelLoaded, onError: showError, maskChannelName });
+  const onError = useCallback(
+    (error: unknown) => {
+      showError(error);
+      onImageTitleChange?.(undefined);
+    },
+    [showError, onImageTitleChange]
+  );
+
+  const volume = useVolume(scenes, {
+    onCreateImage,
+    onChannelLoaded,
+    onError,
+    maskChannelName,
+  });
   const { image, setTime, setScene } = volume;
-
-  // add the image to the viewer on load
-  useEffect(() => {
-    if (image === null) {
-      return;
-    }
-
-    channelRangesRef.current = new Array(image.channelNames.length).fill(undefined);
-
-    const { channelSettings } = viewerState.current;
-
-    view3d.addVolume(image, {
-      // Immediately passing down channel parameters isn't strictly necessary, but keeps things looking consistent on load
-      channels: image.channelNames.map((name) => {
-        // TODO do we really need to be searching by name here?
-        const ch = channelSettings.find((channel) => channel.name === name);
-        if (!ch) {
-          return {};
-        }
-        return {
-          enabled: ch.volumeEnabled,
-          isosurfaceEnabled: ch.isosurfaceEnabled,
-          isovalue: ch.isovalue,
-          isosurfaceOpacity: ch.opacity,
-          color: ch.color,
-        };
-      }),
-    });
-
-    view3d.updateActiveChannels(image);
-    return view3d.removeAllVolumes.bind(view3d);
-  }, [image, view3d, viewerState]);
 
   const hasRawImage = !!(props.rawData && props.rawDims);
   const numScenes = hasRawImage ? 1 : ((props.imageUrl as MultisceneUrls).scenes?.length ?? 1);
