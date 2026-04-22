@@ -1,14 +1,15 @@
 import { Lut, type View3d, type Volume } from "@aics/vole-core";
 import type React from "react";
 import { useEffect } from "react";
+import { useShallow } from "zustand/shallow";
 
-import { controlPointsToLut, rampToControlPoints } from "../../shared/utils/controlPointsToLut";
-import type { ChannelState } from "../ViewerStateProvider/types";
+import { SINGLE_CHANNEL_MODE_COLOR } from "../../shared/constants";
+import { binIndexedControlPointsToLut, rampToControlPoints } from "../../shared/utils/controlPointsToLut";
+import { select, useViewerState, type ViewerStore } from "../../state/store";
 import type { UseImageEffectType } from "./types";
 
 interface ChannelUpdaterProps {
   index: number;
-  channelState: ChannelState;
   view3d: View3d;
   image: Volume | null;
   version: number;
@@ -18,7 +19,11 @@ interface ChannelUpdaterProps {
  * A component that doesn't render anything, but reacts to the provided `ChannelState`
  * and keeps it in sync with the viewer.
  */
-const ChannelUpdater: React.FC<ChannelUpdaterProps> = ({ index, channelState, view3d, image, version }) => {
+const ChannelUpdater: React.FC<ChannelUpdaterProps> = ({ index, view3d, image, version }) => {
+  const channelStateSelector = useShallow((state: ViewerStore) => state.channelSettings[index]);
+  const channelState = useViewerState(channelStateSelector);
+  const singleChannelMode = useViewerState(select("singleChannelMode"));
+  const singleChannelIndex = useViewerState(select("singleChannelIndex"));
   const { volumeEnabled, isosurfaceEnabled, isovalue, colorizeEnabled, colorizeAlpha, opacity, color } = channelState;
 
   // Effects to update channel settings should check if image is present and channel is loaded first
@@ -35,16 +40,22 @@ const ChannelUpdater: React.FC<ChannelUpdaterProps> = ({ index, channelState, vi
   // enable/disable channel can't be dependent on channel load state because it may trigger the channel to load
   useEffect(() => {
     if (image) {
-      view3d.setVolumeChannelEnabled(image, index, volumeEnabled);
+      let enabled = volumeEnabled;
+      if (singleChannelMode) {
+        // if this is the focused channel in single-channel mode, enable volume unless *only* isosurface is enabled
+        enabled = index === singleChannelIndex && !(!volumeEnabled && isosurfaceEnabled);
+      }
+      view3d.setVolumeChannelEnabled(image, index, enabled);
       view3d.updateLuts(image);
     }
-  }, [image, volumeEnabled, index, view3d]);
+  }, [image, volumeEnabled, index, view3d, singleChannelMode, singleChannelIndex, isosurfaceEnabled]);
 
   useEffect(() => {
     if (image) {
-      view3d.setVolumeChannelOptions(image, index, { isosurfaceEnabled });
+      const enabled = isosurfaceEnabled && (!singleChannelMode || singleChannelIndex === index);
+      view3d.setVolumeChannelOptions(image, index, { isosurfaceEnabled: enabled });
     }
-  }, [image, isosurfaceEnabled, index, view3d]);
+  }, [image, isosurfaceEnabled, index, view3d, singleChannelMode, singleChannelIndex]);
 
   useImageEffect(
     (currentImage) => view3d.setVolumeChannelOptions(currentImage, index, { isovalue }),
@@ -58,10 +69,11 @@ const ChannelUpdater: React.FC<ChannelUpdaterProps> = ({ index, channelState, vi
 
   useImageEffect(
     (currentImage) => {
-      view3d.setVolumeChannelOptions(currentImage, index, { color });
+      const finalColor = singleChannelMode ? SINGLE_CHANNEL_MODE_COLOR : color;
+      view3d.setVolumeChannelOptions(currentImage, index, { color: finalColor });
       view3d.updateLuts(currentImage);
     },
-    [color, index, view3d]
+    [color, index, view3d, singleChannelMode]
   );
 
   const { controlPoints, ramp, useControlPoints } = channelState;
@@ -70,8 +82,14 @@ const ChannelUpdater: React.FC<ChannelUpdaterProps> = ({ index, channelState, vi
       if (useControlPoints && controlPoints.length < 2) {
         return;
       }
+      const histogram = currentImage.getHistogram(index);
       const controlPointsToUse = useControlPoints ? controlPoints : rampToControlPoints(ramp);
-      const gradient = controlPointsToLut(controlPointsToUse);
+      // Convert control points from raw intensity values to histogram bin indices
+      const binIndexedControlPoints = controlPointsToUse.map((cp) => ({
+        ...cp,
+        x: histogram.findFractionalBinOfValue(cp.x),
+      }));
+      const gradient = binIndexedControlPointsToLut(binIndexedControlPoints);
       currentImage.setLut(index, gradient);
       view3d.updateLuts(currentImage);
     },

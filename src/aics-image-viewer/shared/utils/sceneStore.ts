@@ -1,14 +1,18 @@
 import type {
   CreateLoaderOptions,
   LoadSpec,
-  PerChannelCallback,
   PrefetchDirection,
   RawArrayLoaderOptions,
   Volume,
   VolumeLoaderContext,
 } from "@aics/vole-core";
-import { VolumeFileFormat } from "@aics/vole-core";
+import { createDefaultMetadata, VolumeFileFormat } from "@aics/vole-core";
 import type { ThreadableVolumeLoader } from "@aics/vole-core/es/types/loaders/IVolumeLoader";
+
+export type LoadSceneOptions = {
+  onCreateScene?: (volume: Volume, sceneIndex: number, loadSpec: LoadSpec) => void;
+  onChannelLoaded?: (volume: Volume, channelIndex: number) => void;
+};
 
 export default class SceneStore {
   context: VolumeLoaderContext;
@@ -48,21 +52,31 @@ export default class SceneStore {
     return loader;
   }
 
-  public async loadScene(
-    scene: number,
-    image: Volume,
-    loadSpec?: LoadSpec,
-    onChannelLoaded?: PerChannelCallback
-  ): Promise<void> {
+  public async loadScene(scene: number, image: Volume, loadSpec?: LoadSpec, options?: LoadSceneOptions): Promise<void> {
     const loader = await this.getLoader(scene);
     const spec = loadSpec ?? image.loadSpecRequired;
 
     image.loader = loader;
-    image.imageInfo.imageInfo = (await loader.createImageInfo(spec)).imageInfo;
-    loader.loadVolumeData(image, spec, onChannelLoaded);
+    const imageInfo = (await loader.createImageInfo(spec)).imageInfo;
+    image.imageInfo.imageInfo = imageInfo;
+    image.imageMetadata = createDefaultMetadata(imageInfo);
+
+    const maxTime = imageInfo.multiscaleLevelDims[imageInfo.multiscaleLevel].shape[0] - 1;
+    const adjustedSpec: LoadSpec = {
+      ...spec,
+      channels: spec.channels?.filter((channelIndex) => channelIndex < imageInfo.channelNames.length),
+      time: Math.min(spec.time, maxTime),
+    };
+
+    options?.onCreateScene?.(image, scene, adjustedSpec);
+    loader.loadVolumeData(image, adjustedSpec, options?.onChannelLoaded);
   }
 
-  public async createVolume(scene: number, loadSpec: LoadSpec, onChannelLoaded?: PerChannelCallback): Promise<Volume> {
+  public async createVolume(
+    scene: number,
+    loadSpec: LoadSpec,
+    onChannelLoaded?: (volume: Volume, channelIndex: number) => void
+  ): Promise<Volume> {
     const loader = await this.getLoader(scene);
     return loader.createVolume(loadSpec, onChannelLoaded);
   }

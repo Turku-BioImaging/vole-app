@@ -1,82 +1,48 @@
 import React from "react";
 
-import type { Styles } from "../shared/types";
-import { type ColorArray, colorArrayToObject, colorObjectToArray } from "../shared/utils/colorRepresentations";
-import type { ViewerSettingUpdater } from "./ViewerStateProvider/types";
+import { colorArrayToObject, colorObjectToArray } from "../shared/utils/colorRepresentations";
+import { select, useViewerState } from "../state/store";
 
-import ColorPicker from "./ColorPicker";
-import { connectToViewerState } from "./ViewerStateProvider";
-
-const ColorPickerRow: React.FC<{
-  color: ColorArray;
-  onColorChange: (color: ColorArray) => void;
-  children?: React.ReactNode;
-}> = ({ color, onColorChange, children }) => (
-  <div style={STYLES.colorPickerRow}>
-    <span style={STYLES.colorPicker}>
-      <ColorPicker
-        color={colorArrayToObject(color)}
-        onColorChange={(color) => onColorChange(colorObjectToArray(color))}
-        width={18}
-        disableAlpha={true}
-      />
-    </span>
-    <span>{children}</span>
-  </div>
-);
+import ControlPanelRow from "./shared/ControlPanelRow";
 
 export interface CustomizeWidgetProps {
-  // From parent
   visibleControls: {
     backgroundColorPicker: boolean;
     boundingBoxColorPicker: boolean;
   };
-
-  // From viewer state
-  showBoundingBox: boolean;
-  backgroundColor: ColorArray;
-  boundingBoxColor: ColorArray;
-
-  changeViewerSetting: ViewerSettingUpdater;
 }
 
-const CustomizeWidget: React.FC<CustomizeWidgetProps> = (props) => (
-  <>
-    {props.visibleControls.backgroundColorPicker && (
-      <ColorPickerRow
-        color={props.backgroundColor}
-        onColorChange={(color) => props.changeViewerSetting("backgroundColor", color)}
-      >
-        Background color
-      </ColorPickerRow>
-    )}
-    {props.visibleControls.boundingBoxColorPicker && (
-      <ColorPickerRow
-        color={props.boundingBoxColor}
-        onColorChange={(color) => props.changeViewerSetting("boundingBoxColor", color)}
-      >
-        Bounding box color
-        {!props.showBoundingBox && <i> - bounding box turned off</i>}
-      </ColorPickerRow>
-    )}
-  </>
-);
+const CustomizeWidget: React.FC<CustomizeWidgetProps> = (props) => {
+  const showBoundingBox = useViewerState(select("showBoundingBox"));
+  const backgroundColor = useViewerState(select("backgroundColor"));
+  const boundingBoxColor = useViewerState(select("boundingBoxColor"));
+  const changeViewerSetting = useViewerState(select("changeViewerSetting"));
 
-const STYLES: Styles = {
-  colorPickerRow: {
-    padding: "14px 0",
-    display: "flex",
-    borderBottom: "1px solid #6e6e6e",
-    color: "var(--color-controlpanel-text)",
-  },
-  colorPicker: {
-    marginRight: "16px",
-  },
+  return (
+    <>
+      {props.visibleControls.backgroundColorPicker && (
+        <ControlPanelRow
+          color={colorArrayToObject(backgroundColor)}
+          onColorChange={(color) => changeViewerSetting("backgroundColor", colorObjectToArray(color))}
+          title="Background color"
+          verticalMargin={16}
+        />
+      )}
+      {props.visibleControls.boundingBoxColorPicker && (
+        <ControlPanelRow
+          color={colorArrayToObject(boundingBoxColor)}
+          onColorChange={(color) => changeViewerSetting("boundingBoxColor", colorObjectToArray(color))}
+          title={
+            <>
+              Bounding box color
+              {!showBoundingBox && <i> - bounding box turned off</i>}
+            </>
+          }
+          verticalMargin={16}
+        />
+      )}
+    </>
+  );
 };
 
-export default connectToViewerState(CustomizeWidget, [
-  "showBoundingBox",
-  "backgroundColor",
-  "boundingBoxColor",
-  "changeViewerSetting",
-]);
+export default CustomizeWidget;

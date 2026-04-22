@@ -19,8 +19,13 @@ const palette = {
   veryDarkPurple: "#5f369f",
   veryLtPurple: "#e7e4f2",
   brightRed: "#ff4d4d",
+  brightYellow: "#e39b0d",
   brightGreen: "#61d900",
+  veryBrightGreen: "#61ff00",
   brightBlue: "#0099ff",
+  veryBrightBlue: "#0dc4d9",
+  darkBlue: "#29484c",
+  darkYellow: "#4c3c29",
 };
 
 const theme = {
@@ -31,7 +36,7 @@ const theme = {
       primaryDk: palette.darkPurple,
       success: palette.brightGreen,
       error: palette.brightRed,
-      warning: palette.brightRed,
+      warning: palette.brightYellow,
       info: palette.brightBlue,
     },
     text: {
@@ -95,6 +100,7 @@ const theme = {
       sectionBg: palette.medDarkGrey,
       drawerBg: palette.veryDarkGrey,
       rampSlider: palette.medPurple,
+      isovalueSlider: palette.veryBrightGreen,
     },
     toolbar: {
       buttonBg: "#000000cc",
@@ -119,6 +125,16 @@ const theme = {
       selectedText: palette.white,
       selectedBg: palette.medGrey,
       textPlaceholder: palette.ltPurple,
+    },
+    alert: {
+      warning: {
+        text: palette.brightYellow,
+        bg: palette.darkYellow,
+      },
+      info: {
+        text: palette.veryBrightBlue,
+        bg: palette.darkBlue,
+      },
     },
     tooltip: {
       bg: palette.black,
@@ -185,7 +201,6 @@ const CssProvider = styled.div<{ $theme: AppTheme }>`
       --color-button-tertiary-active-text: ${$theme.colors.button.tertiary.hoverText};
 
       --color-button-icon-disabled-text: ${$theme.colors.button.tertiary.disabledText};
-      --color-button-icon-disabled-text: ${$theme.colors.button.tertiary.disabledText};
       --color-button-icon-activated-text: ${$theme.colors.button.tertiary.activatedText};
       --color-button-icon-activated-bg: ${$theme.colors.button.tertiary.activatedBg};
       --color-button-icon-activated-outline: ${$theme.colors.button.tertiary.activatedOutline};
@@ -199,6 +214,7 @@ const CssProvider = styled.div<{ $theme: AppTheme }>`
       --color-controlpanel-section-bg: ${$theme.colors.controlPanel.sectionBg};
       --color-controlpanel-drawer-bg: ${$theme.colors.controlPanel.drawerBg};
       --color-controlpanel-ramp-slider: ${$theme.colors.controlPanel.rampSlider};
+      --color-controlpanel-isovalue-slider: ${$theme.colors.controlPanel.isovalueSlider};
 
       --color-landingpage-bg: ${$theme.colors.landingPage.bg};
       --color-landingpage-bg-alt: ${$theme.colors.landingPage.bgAlt};
@@ -207,6 +223,11 @@ const CssProvider = styled.div<{ $theme: AppTheme }>`
 
       --color-statusflag-border: ${$theme.colors.statusFlag.border};
       --color-statusflag-text: ${$theme.colors.statusFlag.text};
+
+      --color-alert-warning-text: ${$theme.colors.alert.warning.text};
+      --color-alert-warning-bg: ${$theme.colors.alert.warning.bg};
+      --color-alert-info-text: ${$theme.colors.alert.info.text};
+      --color-alert-info-bg: ${$theme.colors.alert.info.bg};
 
       --color-layout-dividers: ${$theme.colors.layout.dividers};
 
@@ -389,6 +410,14 @@ export default function StyleProvider(props: PropsWithChildren<{}>): ReactElemen
           colorBgContainer: "transparent",
           colorSplit: theme.colors.layout.split,
           colorPrimaryTextHover: theme.colors.text.selectionText,
+          colorWarning: theme.colors.alert.warning.text,
+          colorWarningBg: theme.colors.alert.warning.bg,
+          colorWarningBorder: theme.colors.alert.warning.text,
+          colorWarningText: theme.colors.alert.warning.text,
+          colorInfo: theme.colors.alert.info.text,
+          colorInfoBg: theme.colors.alert.info.bg,
+          colorInfoBorder: theme.colors.alert.info.text,
+          colorInfoText: theme.colors.alert.info.text,
           fontWeightStrong: 400,
           colorBgElevated: palette.darkGrey,
           controlItemBgHover: theme.colors.menu.hoverBg,
@@ -403,10 +432,6 @@ export default function StyleProvider(props: PropsWithChildren<{}>): ReactElemen
             defaultHoverBg: theme.colors.button.secondary.bg,
             defaultActiveBg: theme.colors.button.secondary.bg,
             defaultActiveBorderColor: theme.colors.button.tertiary.activeOutline,
-          },
-          Card: {
-            borderRadiusLG: 0,
-            headerHeight: 48,
           },
           Collapse: {
             borderRadiusLG: 0,

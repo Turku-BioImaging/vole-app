@@ -1,7 +1,7 @@
 import type { CameraState } from "@aics/vole-core";
 import { describe, expect, it } from "@jest/globals";
 
-import type { ChannelState, ViewerState } from "../../../components/ViewerStateProvider/types";
+import type { ChannelState, ViewerState } from "../../../state/types";
 import { getDefaultCameraState, getDefaultChannelState, getDefaultViewerState } from "../../constants";
 import { ImageType, RenderMode, ViewMode } from "../../enums";
 import type { ViewerChannelSettingParams, ViewerStateParams } from "../urlParsing";
@@ -243,6 +243,7 @@ describe("Channel state serialization", () => {
     ramp: [0, 255],
     plotMin: 0,
     plotMax: 255,
+    keepIntensityRange: false,
   };
   const DEFAULT_SERIALIZED_CHANNEL_STATE: ViewerChannelSettingParams = {
     col: "ff0000",
@@ -253,8 +254,9 @@ describe("Channel state serialization", () => {
     clz: "1",
     cza: "0.5",
     cpe: "0",
-    cps: "0:0.5:1:255:1:1",
-    rmp: "0:255",
+    cpt: "0:0.5:1:255:1:1",
+    ram: "0:255",
+    pin: "0",
   };
 
   // Note that the serialization + deserialization are NOT direct inverses.
@@ -298,7 +300,7 @@ describe("Channel state serialization", () => {
         surfaceOpacity: 0.75,
         colorizeEnabled: true,
         colorizeAlpha: 0.5,
-        lut: ["0", "255"],
+        intensity: { lut: ["0", "255"] },
       });
     });
 
@@ -318,7 +320,7 @@ describe("Channel state serialization", () => {
       for (const [encodedLut, decodedLut] of luts) {
         const data = { lut: encodedLut } as ViewerChannelSettingParams;
         const result = deserializeViewerChannelSetting(0, data);
-        expect(result.lut).toEqual(decodedLut);
+        expect(result.intensity?.lut).toEqual(decodedLut);
       }
     });
 
@@ -380,8 +382,9 @@ describe("Channel state serialization", () => {
         // TODO: the settings below are not serialized. should they be? (see #384)
         plotMin: 0,
         plotMax: 255,
+        keepIntensityRange: false,
       };
-      const serializedCustomChannelState: Required<Omit<ViewerChannelSettingParams, "lut">> = {
+      const serializedCustomChannelState: Required<Omit<ViewerChannelSettingParams, "lut" | "rmp" | "cps">> = {
         col: "03ff9d",
         ven: "0",
         sen: "0",
@@ -390,8 +393,9 @@ describe("Channel state serialization", () => {
         clz: "0",
         cza: "1",
         cpe: "0",
-        cps: "",
-        rmp: "0:255",
+        cpt: "",
+        ram: "0:255",
+        pin: "0",
       };
       expect(serializeViewerChannelSetting(customChannelState, false)).toEqual(serializedCustomChannelState);
     });
@@ -418,6 +422,10 @@ describe("Viewer state", () => {
     time: 0,
     scene: 0,
     cameraState: undefined,
+    singleChannelMode: false,
+    singleChannelIndex: 0,
+    useExactScaleLevel: false,
+    scaleLevelIndex: 0,
   };
   const SERIALIZED_DEFAULT_VIEWER_STATE: ViewerStateParams = {
     mode: "volumetric",
@@ -437,6 +445,10 @@ describe("Viewer state", () => {
     slice: "0.5,0.5,0.5",
     t: "0",
     scene: "0",
+    scm: "0",
+    sci: "0",
+    esl: "0",
+    scl: "0",
   };
 
   const CUSTOM_VIEWER_STATE: ViewerState = {
@@ -457,6 +469,10 @@ describe("Viewer state", () => {
     slice: { x: 0.25, y: 0.75, z: 0.5 },
     time: 100,
     scene: 3,
+    singleChannelMode: true,
+    singleChannelIndex: 3,
+    useExactScaleLevel: true,
+    scaleLevelIndex: 3,
     cameraState: {
       position: [-1.05, -4, 45],
       target: [0, 0, 0],
@@ -483,6 +499,10 @@ describe("Viewer state", () => {
     slice: "0.25,0.75,0.5",
     t: "100",
     scene: "3",
+    scm: "1",
+    sci: "3",
+    esl: "1",
+    scl: "3",
     cam: "pos:-1.05:-4:45,tar:0:0:0,up:0:1:0,ort:3.534,fov:43.5",
   };
 
@@ -589,25 +609,51 @@ describe("Channel state deserialization", () => {
     { x: 260, opacity: 1, color: [0, 255, 180] },
   ];
 
+  describe("legacy control points", () => {
+    it("parses comma-separated control points", () => {
+      const result = deserializeViewerChannelSetting(0, {
+        cps: "-10:0:000000,50:0:000000,100:0.3:0010ff,140:0.8:00ffff,260:1:00ffb4",
+      });
+      expect(result.controlPoints).toEqual(DEFAULT_CONTROL_POINTS);
+    });
+
+    it("parses colon-separated control points", () => {
+      const result = deserializeViewerChannelSetting(0, {
+        cps: "-10:0:000000:50:0:000000:100:0.3:0010ff:140:0.8:00ffff:260:1:00ffb4",
+      });
+      expect(result.controlPoints).toEqual(DEFAULT_CONTROL_POINTS);
+    });
+
+    it("replaces '1' color strings with default color #ffffff", () => {
+      const result = deserializeViewerChannelSetting(0, {
+        cps: "0:0:1:50:1:1",
+      });
+      expect(result.controlPoints).toEqual([
+        { x: 0, opacity: 0, color: [255, 255, 255] },
+        { x: 50, opacity: 1, color: [255, 255, 255] },
+      ]);
+    });
+  });
+
   it("parses comma-separated control points", () => {
     const result = deserializeViewerChannelSetting(0, {
-      cps: "-10:0:000000,50:0:000000,100:0.3:0010ff,140:0.8:00ffff,260:1:00ffb4",
+      cpt: "-10:0:000000,50:0:000000,100:0.3:0010ff,140:0.8:00ffff,260:1:00ffb4",
     });
-    expect(result.controlPoints).toEqual(DEFAULT_CONTROL_POINTS);
+    expect(result.intensity?.controlPoints).toEqual(DEFAULT_CONTROL_POINTS);
   });
 
   it("parses colon-separated control points", () => {
     const result = deserializeViewerChannelSetting(0, {
-      cps: "-10:0:000000:50:0:000000:100:0.3:0010ff:140:0.8:00ffff:260:1:00ffb4",
+      cpt: "-10:0:000000:50:0:000000:100:0.3:0010ff:140:0.8:00ffff:260:1:00ffb4",
     });
-    expect(result.controlPoints).toEqual(DEFAULT_CONTROL_POINTS);
+    expect(result.intensity?.controlPoints).toEqual(DEFAULT_CONTROL_POINTS);
   });
 
   it("replaces '1' color strings with default color #ffffff", () => {
     const result = deserializeViewerChannelSetting(0, {
-      cps: "0:0:1:50:1:1",
+      cpt: "0:0:1:50:1:1",
     });
-    expect(result.controlPoints).toEqual([
+    expect(result.intensity?.controlPoints).toEqual([
       { x: 0, opacity: 0, color: [255, 255, 255] },
       { x: 50, opacity: 1, color: [255, 255, 255] },
     ]);
@@ -632,7 +678,9 @@ describe("parseViewerUrlParams", () => {
         colorizeEnabled: false,
         colorizeAlpha: 0.9,
         isovalue: 129,
-        lut: ["p50", "p99"],
+        intensity: {
+          lut: ["p50", "p99"],
+        },
       },
     ],
     [
@@ -648,7 +696,9 @@ describe("parseViewerUrlParams", () => {
         surfaceEnabled: false,
         enabled: false,
         isovalue: 0,
-        lut: ["0", "255"],
+        intensity: {
+          lut: ["0", "255"],
+        },
       },
     ],
     [
@@ -664,15 +714,16 @@ describe("parseViewerUrlParams", () => {
         surfaceEnabled: true,
         enabled: false,
         isovalue: 100,
-        lut: ["autoij", ""],
+        intensity: {
+          lut: ["autoij", ""],
+        },
       },
     ],
   ];
 
   it("parses unencoded per-channel setting", async () => {
     for (const [queryString, , expected] of channelParamToSetting) {
-      const params = new URLSearchParams(queryString);
-      const { args } = await parseViewerUrlParams(params);
+      const { args } = await parseViewerUrlParams(queryString);
       const channelSetting = args.viewerChannelSettings?.groups[0].channels[0]!;
       expect(channelSetting).toEqual(expected);
     }
@@ -680,8 +731,7 @@ describe("parseViewerUrlParams", () => {
 
   it("parses encoded per-channel settings", async () => {
     for (const [, queryString, expected] of channelParamToSetting) {
-      const params = new URLSearchParams(queryString);
-      const { args } = await parseViewerUrlParams(params);
+      const { args } = await parseViewerUrlParams(queryString);
       const channelSetting = args.viewerChannelSettings?.groups[0].channels[0]!;
       expect(channelSetting).toEqual(expected);
     }
@@ -692,8 +742,7 @@ describe("parseViewerUrlParams", () => {
     for (let i = 0; i < 2; i++) {
       const queryString =
         channelParamToSetting[0][i] + "&" + channelParamToSetting[1][i] + "&" + channelParamToSetting[2][i];
-      const params = new URLSearchParams(queryString);
-      const { args } = await parseViewerUrlParams(params);
+      const { args } = await parseViewerUrlParams(queryString);
       const channelSettings = args.viewerChannelSettings?.groups[0].channels!;
 
       // Order is not guaranteed, so check if any of the expected settings are present
@@ -705,8 +754,7 @@ describe("parseViewerUrlParams", () => {
 
   it("overrides ch settings when per-channel settings are included", async () => {
     const queryString = "?ch=0&lut=1,2&c1=ven:1,lut:4:5";
-    const params = new URLSearchParams(queryString);
-    const { args } = await parseViewerUrlParams(params);
+    const { args } = await parseViewerUrlParams(queryString);
 
     const groups = args.viewerChannelSettings?.groups[0]!;
     expect(groups.channels).toHaveLength(1);
@@ -714,13 +762,12 @@ describe("parseViewerUrlParams", () => {
 
     expect(channelSetting.match).toEqual(1);
     expect(channelSetting.enabled).toEqual(true);
-    expect(channelSetting.lut).toEqual(["4", "5"]);
+    expect(channelSetting.intensity?.lut).toEqual(["4", "5"]);
   });
 
   it("skips missing channel indices", async () => {
     const queryString = "?c0=ven:1&c15=ven:1,lut:4:5";
-    const params = new URLSearchParams(queryString);
-    const { args } = await parseViewerUrlParams(params);
+    const { args } = await parseViewerUrlParams(queryString);
 
     const groups = args.viewerChannelSettings?.groups[0]!;
     expect(groups.channels).toHaveLength(2);
@@ -732,13 +779,12 @@ describe("parseViewerUrlParams", () => {
 
     expect(channelSetting2.match).toEqual(15);
     expect(channelSetting2.enabled).toEqual(true);
-    expect(channelSetting2.lut).toEqual(["4", "5"]);
+    expect(channelSetting2.intensity?.lut).toEqual(["4", "5"]);
   });
 
   it("creates empty default data for bad per-channel setting formats", async () => {
     const queryString = "c1=bad&c0=ultrabad:bad&c2=,,,,,,";
-    const params = new URLSearchParams(queryString);
-    const { args } = await parseViewerUrlParams(params);
+    const { args } = await parseViewerUrlParams(queryString);
     const channelSettings = args.viewerChannelSettings?.groups[0].channels!;
     expect(channelSettings).toHaveLength(3);
     for (let i = 0; i < channelSettings.length; i++) {
@@ -750,8 +796,7 @@ describe("parseViewerUrlParams", () => {
 
   it("enables first three channels by default if no channel settings are provided", async () => {
     const queryString = "url=https://example.com/image.tiff";
-    const params = new URLSearchParams(queryString);
-    const { args } = await parseViewerUrlParams(params);
+    const { args } = await parseViewerUrlParams(queryString);
 
     // Should have one group
     const channelSettingsGroups = args.viewerChannelSettings?.groups!;
@@ -764,8 +809,7 @@ describe("parseViewerUrlParams", () => {
   it("parses default nucmorph settings", async () => {
     const queryString =
       "url=https://example.com/image1.ome.zarr,https://example.com/image2.ome.zarr&c0=ven:0&c1=ven:1,lut:autoij:&c2=ven:1,clz:1&view=Z";
-    const params = new URLSearchParams(queryString);
-    const { args, viewerSettings } = await parseViewerUrlParams(params);
+    const { args, viewerSettings } = await parseViewerUrlParams(queryString);
 
     expect(viewerSettings.viewMode).toEqual(ViewMode.xy);
     expect(args.imageUrl).toEqual({
@@ -783,24 +827,68 @@ describe("parseViewerUrlParams", () => {
     expect(channelSettings.channels[0].enabled).toEqual(false);
     expect(channelSettings.channels[1].match).toEqual(1);
     expect(channelSettings.channels[1].enabled).toEqual(true);
-    expect(channelSettings.channels[1].lut).toEqual(["autoij", ""]);
+    expect(channelSettings.channels[1].intensity?.lut).toEqual(["autoij", ""]);
     expect(channelSettings.channels[2].match).toEqual(2);
     expect(channelSettings.channels[2].enabled).toEqual(true);
     expect(channelSettings.channels[2].colorizeEnabled).toEqual(true);
   });
 
+  it("can handle arbitrary levels of URL encoding", async () => {
+    // GOAL: no matter how, where, or how many times URL encoding is applied when concatenating
+    // these scene URLs into one param, they should decode back to the same URLs.
+    const scenes = [
+      ["https://example.com/image1.ome.zarr"],
+      ["https://example.com/image2.ome.zarr", "https://example.com/image3.ome.zarr?foo=1%2C2%2C3"],
+    ];
+
+    // Recursively generate combinations of encoded and unencoded URLs
+    interface NestedArray<T> extends Array<T | NestedArray<T>> {}
+    const allEncodingCombinations = (urls: string | NestedArray<string>, delims: string[]): string[] => {
+      // BASE CASE: generate an unencoded and encoded variant of a single URL
+      if (typeof urls === "string") {
+        return [urls, encodeURIComponent(urls)];
+      }
+
+      // Recursively generate combinations for all array elements
+      const nextDelims = delims.slice(1);
+      const encoded = urls.map((url) => allEncodingCombinations(url, nextDelims));
+
+      // Concatenate those together in all possible combinations
+      const combined = encoded.reduce((accum, next) => {
+        const result = [];
+        for (const a of accum) {
+          for (const n of next) {
+            result.push(a + delims[0] + n);
+          }
+        }
+        return result;
+      });
+
+      // Generate unencoded, encoded, and double-encoded variants of all those concatenated strings
+      return combined.flatMap((url) => {
+        const encodedOnce = encodeURIComponent(url);
+        return [url, encodedOnce, encodeURIComponent(encodedOnce)];
+      });
+    };
+
+    const encodings = allEncodingCombinations(scenes, ["+", ","]);
+
+    for (const encoding of encodings) {
+      const { args } = await parseViewerUrlParams(`url=${encoding}`);
+      expect(args.imageUrl).toEqual({ scenes });
+    }
+  });
+
   it("parses viewer settings", async () => {
     const queryString = "mask=30&view=X";
-    const params = new URLSearchParams(queryString);
-    const { viewerSettings } = await parseViewerUrlParams(params);
+    const { viewerSettings } = await parseViewerUrlParams(queryString);
     expect(viewerSettings.viewMode).toEqual(ViewMode.yz);
     expect(viewerSettings.maskAlpha).toEqual(30);
   });
 
   it("returns an empty object when no params are passed in", async () => {
     const queryString = "";
-    const params = new URLSearchParams(queryString);
-    const { args, viewerSettings } = await parseViewerUrlParams(params);
+    const { args, viewerSettings } = await parseViewerUrlParams(queryString);
     expect(Object.keys(args).length === 0);
     expect(args).toEqual({});
     expect(Object.keys(viewerSettings).length === 0);
@@ -829,6 +917,7 @@ describe("serializeViewerUrlParams", () => {
         ramp: [-10, 260.1],
         plotMin: 0,
         plotMax: 255,
+        keepIntensityRange: true,
       },
       {
         name: "channel1",
@@ -851,13 +940,14 @@ describe("serializeViewerUrlParams", () => {
         ramp: [50, 140],
         plotMin: 0,
         plotMax: 255,
+        keepIntensityRange: false,
       },
     ];
     const serialized = serializeViewerUrlParams({ channelSettings: channelStates }, false);
     // Format should look like "ven:1,col:ff0000,clz:1,cza:0.75,isa:0.5,sen:1,isv:128", but ordering
     // is not guaranteed. Parse the string and check that the values match the expected values.
     // Note that `lut` is not included when serializing from existing viewer state.
-    const expectedChannel0: Required<Omit<ViewerChannelSettingParams, "lut">> = {
+    const expectedChannel0: Required<Omit<ViewerChannelSettingParams, "lut" | "rmp" | "cps">> = {
       ven: "1",
       col: "ff0000",
       clz: "1",
@@ -865,11 +955,12 @@ describe("serializeViewerUrlParams", () => {
       isa: "0.75",
       sen: "1",
       isv: "128",
-      rmp: "-10:260.1",
-      cps: "0:0:808080:1:1:ff0000",
+      ram: "-10:260.1",
+      cpt: "0:0:808080:1:1:ff0000",
       cpe: "0",
+      pin: "1",
     };
-    const expectedChannel1: Required<Omit<ViewerChannelSettingParams, "lut">> = {
+    const expectedChannel1: Required<Omit<ViewerChannelSettingParams, "lut" | "rmp" | "cps">> = {
       ven: "0",
       col: "808080",
       clz: "0",
@@ -877,9 +968,10 @@ describe("serializeViewerUrlParams", () => {
       isa: "0",
       sen: "0",
       isv: "57",
-      rmp: "50:140",
-      cps: "-10:0:000000:50:0:000000:100:0.3:0010ff:140:0.8:00ffff:260:1:00ffb4",
+      ram: "50:140",
+      cpt: "-10:0:000000:50:0:000000:100:0.3:0010ff:140:0.8:00ffff:260:1:00ffb4",
       cpe: "1",
+      pin: "0",
     };
 
     expect(serialized["c0"]).toBeDefined();

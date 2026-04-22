@@ -1,16 +1,16 @@
-import { Button, Collapse, type CollapseProps, Dropdown, Flex, type MenuProps, Tooltip } from "antd";
+import { Button, Checkbox, Collapse, type CollapseProps, Dropdown, Flex, type MenuProps, Tooltip } from "antd";
 import type { MenuInfo } from "rc-menu/lib/interface";
 import React from "react";
 
 import { PRESET_COLOR_MAP } from "../../shared/constants";
 import type { MetadataRecord } from "../../shared/types";
+import { select, useViewerState } from "../../state/store";
 
 import ChannelsWidget from "../ChannelsWidget";
 import CustomizeWidget, { type CustomizeWidgetProps } from "../CustomizeWidget";
 import GlobalVolumeControls, { type GlobalVolumeControlsProps } from "../GlobalVolumeControls";
 import MetadataViewer from "../MetadataViewer";
 import ViewerIcon from "../shared/ViewerIcon";
-import { connectToViewerState } from "../ViewerStateProvider";
 
 import "./styles.css";
 
@@ -26,10 +26,9 @@ interface ControlPanelProps
       colorPresetsDropdown: boolean;
       metadataViewer: boolean;
     };
-  getMetadata: () => MetadataRecord;
+  metadata: MetadataRecord;
   collapsed: boolean;
   setCollapsed: (value: boolean) => void;
-  resetToDefaultViewerState: () => void;
 }
 
 const enum ControlTab {
@@ -39,8 +38,8 @@ const enum ControlTab {
 }
 
 const ControlTabNames = {
-  [ControlTab.Channels]: "Channel Settings",
-  [ControlTab.Advanced]: "Advanced Settings",
+  [ControlTab.Channels]: "Channel settings",
+  [ControlTab.Advanced]: "Advanced settings",
   [ControlTab.Metadata]: "Metadata",
 };
 
@@ -50,6 +49,9 @@ function ControlPanel(props: ControlPanelProps): React.ReactElement {
     _setTab(newTab);
     props.setCollapsed(false);
   };
+  const resetToDefaultViewerState = useViewerState(select("resetToDefaultViewerState"));
+  const singleChannelMode = useViewerState(select("singleChannelMode"));
+  const changeViewerSetting = useViewerState(select("changeViewerSetting"));
 
   const controlPanelContainerRef = React.useRef<HTMLDivElement>(null);
   const getDropdownContainer = controlPanelContainerRef.current ? () => controlPanelContainerRef.current! : undefined;
@@ -61,15 +63,25 @@ function ControlPanel(props: ControlPanelProps): React.ReactElement {
   const makeTurnOnPresetFn = ({ key }: MenuInfo): void =>
     props.onApplyColorPresets(PRESET_COLOR_MAP[key as unknown as number].colors);
 
-  const renderColorPresetsDropdown = (): React.ReactNode => {
+  const renderChannelSettingsHeader = (): React.ReactNode => {
     const dropDownMenuProps: MenuProps = {
       items: PRESET_COLOR_MAP.map((preset, index) => {
         return { key: index, label: preset.name };
       }),
       onClick: makeTurnOnPresetFn,
     };
+
+    const singleChannelTitle = singleChannelMode ? (
+      "Turn off single channel mode"
+    ) : (
+      <>
+        <div>Turn on single channel mode</div>
+        <div>Use arrow keys to navigate</div>
+      </>
+    );
+
     return (
-      <div className="color-presets-dropdown">
+      <div className="channel-settings-header">
         <Dropdown trigger={["click"]} menu={dropDownMenuProps} getPopupContainer={getDropdownContainer}>
           <Button>
             <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: "4px" }}>
@@ -78,6 +90,18 @@ function ControlPanel(props: ControlPanelProps): React.ReactElement {
             </div>
           </Button>
         </Dropdown>
+
+        <div style={{ alignSelf: "end", width: "40%" }}>
+          <Tooltip title={singleChannelTitle}>
+            <Checkbox
+              name="Single channel mode"
+              checked={singleChannelMode}
+              onChange={({ target }) => changeViewerSetting("singleChannelMode", target.checked)}
+            >
+              Single channel mode
+            </Checkbox>
+          </Tooltip>
+        </div>
       </div>
     );
   };
@@ -128,7 +152,7 @@ function ControlPanel(props: ControlPanelProps): React.ReactElement {
             title="Clears ALL rendering settings and channel configuration to the default viewer state.
             This will replace any edits to channel settings, color presets, and rendering adjustments."
           >
-            <Button onClick={props.resetToDefaultViewerState}>Clear all settings</Button>
+            <Button onClick={resetToDefaultViewerState}>Clear all settings</Button>
           </Tooltip>
         </div>
       </Flex>
@@ -153,9 +177,9 @@ function ControlPanel(props: ControlPanelProps): React.ReactElement {
       </div>
       <div className="control-panel-col" style={{ flex: "0 0 450px" }}>
         <h2 className="control-panel-title">{ControlTabNames[tab]}</h2>
-        {visibleControls.colorPresetsDropdown && tab === ControlTab.Channels && renderColorPresetsDropdown()}
+        {visibleControls.colorPresetsDropdown && tab === ControlTab.Channels && renderChannelSettingsHeader()}
         {hasImage && (
-          <div className="channel-rows-list">
+          <div className="control-panel-content">
             {tab === ControlTab.Channels && (
               <ChannelsWidget
                 channelDataChannels={props.channelDataChannels}
@@ -168,7 +192,7 @@ function ControlPanel(props: ControlPanelProps): React.ReactElement {
               />
             )}
             {tab === ControlTab.Advanced && renderAdvancedSettings()}
-            {tab === ControlTab.Metadata && <MetadataViewer metadata={props.getMetadata()} />}
+            {tab === ControlTab.Metadata && <MetadataViewer metadata={props.metadata} />}
           </div>
         )}
       </div>
@@ -176,4 +200,4 @@ function ControlPanel(props: ControlPanelProps): React.ReactElement {
   );
 }
 
-export default connectToViewerState(ControlPanel, ["resetToDefaultViewerState"]);
+export default ControlPanel;

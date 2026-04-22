@@ -4,8 +4,14 @@ import { Alert, Button } from "antd";
 import React from "react";
 
 import { useConstructor } from "../../shared/utils/hooks";
+import { useViewerState } from "../../state/store";
 
 import "./styles.css";
+
+export type ErrorAlertDescription = {
+  title: string;
+  description: React.ReactNode;
+};
 
 const IssueLink: React.FC<React.PropsWithChildren<{ bug?: boolean }>> = ({ bug, children }) => (
   <a
@@ -39,9 +45,9 @@ const ERROR_TYPE_DESCRIPTIONS: { [T in VolumeLoadErrorType]: React.ReactNode } =
   ),
   [VolumeLoadErrorType.TOO_LARGE]: (
     <>
-      No scale level is available for this volume which fits within our maximum GPU memory footprint. This maximum is
+      No resolution level is available for this volume which fits within our maximum memory footprint. This maximum is
       tuned to ensure compatibility with the majority of browsers. If you&apos;re trying to load your own OME-Zarr
-      dataset, you may be able to open this volume by including a lower scale level.
+      dataset, you may be able to open this volume by including a lower resolution level.
     </>
   ),
   [VolumeLoadErrorType.LOAD_DATA_FAILED]: (
@@ -69,12 +75,23 @@ const ERROR_TYPE_DESCRIPTIONS: { [T in VolumeLoadErrorType]: React.ReactNode } =
 };
 
 const getErrorTitle = (error: unknown): string =>
-  (error instanceof Error && error.toString?.()) || (typeof error === "string" && error) || "Unknown error";
+  (error instanceof Error && error.toString?.()) ||
+  (typeof error === "string" && error) ||
+  (typeof error === "object" && error !== null && (error as ErrorAlertDescription).title) ||
+  "Unknown error";
 
 const getErrorDescription = (error: unknown): React.ReactNode => {
   const type: VolumeLoadErrorType | undefined = (error as VolumeLoadError).type;
   if (!type) {
-    return UNKNOWN_ERROR_DESCRIPTION;
+    return (
+      (typeof error === "object" && error !== null && (error as ErrorAlertDescription).description) ||
+      UNKNOWN_ERROR_DESCRIPTION
+    );
+  }
+  if (type === VolumeLoadErrorType.TOO_LARGE && useViewerState.getState().useExactScaleLevel) {
+    return (
+      <>The viewer cannot load this resolution level within memory limits. Try again with a smaller resolution level.</>
+    );
   }
   return ERROR_TYPE_DESCRIPTIONS[type] ?? UNKNOWN_ERROR_DESCRIPTION;
 };
@@ -92,15 +109,22 @@ const ErrorAlert: React.FC<ErrorAlertProps> = ({ errors, firstErrorCount = 0, af
   const [errorsSeenCount, setErrorsSeenCount] = React.useState(0);
   const error = Array.isArray(errors) ? errors[0] : errors;
 
+  const infoStyle = { display: showDetails ? undefined : "none" } as const;
+
   const errorMessage = (
     <>
-      <div>
+      <div className="error-title">
         {getErrorTitle(error) + (firstErrorCount > 1 ? ` (${firstErrorCount})` : "")}{" "}
         <Button type="text" onClick={() => setShowDetails(!showDetails)}>
           {showDetails ? "Show less info" : "Show more info"}
         </Button>
       </div>
-      <div style={{ display: showDetails ? undefined : "none" }}>{getErrorDescription(error)}</div>
+      <div style={infoStyle}>{getErrorDescription(error)}</div>
+      {error.cause !== undefined && (
+        <div className="error-cause" style={infoStyle}>
+          Caused by {getErrorTitle(error.cause)}
+        </div>
+      )}
     </>
   );
 
@@ -140,8 +164,8 @@ export const useErrorAlert = (): [React.ReactNode, (error: unknown) => void] => 
 
   const addError = React.useCallback(
     (error: unknown) => {
-      console.error(error);
       const errorTitle = getErrorTitle(error);
+      console.error(error instanceof Error ? error : errorTitle);
       const errorSeenCount = (seenErrors.get(errorTitle) ?? 0) + 1;
 
       setErrorList((prev) => [...prev, error]);

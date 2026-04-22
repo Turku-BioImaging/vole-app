@@ -3,7 +3,8 @@ import type { FirebaseFirestore } from "@firebase/firestore-types";
 import { isEqual } from "lodash";
 
 import type { AppProps, MultisceneUrls } from "../../components/App/types";
-import type { ChannelState, ViewerState, ViewerStateContextType } from "../../components/ViewerStateProvider/types";
+import type { ViewerStore } from "../../state/store";
+import type { ChannelState, ViewerState } from "../../state/types";
 import { getDefaultCameraState, getDefaultChannelState, getDefaultViewerState } from "../constants";
 import { ImageType, RenderMode, ViewMode } from "../enums";
 import type { ManifestJson, MetadataRecord, PerAxis } from "../types";
@@ -11,6 +12,7 @@ import type { ColorArray } from "./colorRepresentations";
 import { removeMatchingProperties, removeUndefinedProperties } from "./datatypes";
 import FirebaseRequest, { type DatasetMetaData } from "./firebase";
 import { clamp } from "./math";
+import { readStoredMetadata, readStoredScenes } from "./storage";
 import type { ViewerChannelSetting, ViewerChannelSettings } from "./viewerChannelSettings";
 
 export const ENCODED_COMMA_REGEX = /%2C/g;
@@ -18,53 +20,57 @@ export const ENCODED_COLON_REGEX = /%3A/g;
 const DEFAULT_CONTROL_POINT_COLOR: [number, number, number] = [255, 255, 255];
 const DEFAULT_CONTROL_POINT_COLOR_CODE = "1";
 
-/** If the `url` query param equals this, parse image url(s) and metadata from local storage instead of params */
-const URL_FETCH_FROM_STORAGE = "storage";
-
-// TODO: refactor regexes to be composed of one another rather than duplicating code
-// const COLOR_CODES: Record<string, ColorArray> = {
-//   "0": [0, 0, 0],
-//   "1": [255, 255, 255],
-//   "-1": [255, 255, 255],
-//   w: [255, 255, 255],
-//   k: [0, 0, 0],
-// };
-// const COLOR_CODE_REGEX = new RegExp(`(${Object.keys(COLOR_CODES).join("|")})`);
-// const HEX_COLOR_REGEX = new RegExp(`(([0-9a-fA-F]{6})|${COLOR_CODE_REGEX.source})`);
+const FLOAT_REGEX = /-?[0-9]*.?[0-9]+/;
 
 const CHANNEL_STATE_KEY_REGEX = /^c[0-9]+$/;
+
 /** Match colon-separated pairs of alphanumeric strings */
 const LUT_REGEX = /^-?[a-z0-9.]*:[ ]*-?[a-z0-9.]*$/;
-/** Match colon-separated pairs of numeric strings */
-const RAMP_REGEX = /^-?[0-9.]*:-?[0-9.]*$/;
+
+/**
+ * Match colon-separated pairs of numeric strings, representing histogram bin
+ * indices or intensity values.
+ */
+const RAMP_REGEX = new RegExp(`^${FLOAT_REGEX.source}:${FLOAT_REGEX.source}$`);
+
 /**
  * Match comma-separated triplet of numeric strings.
  */
-const SLICE_REGEX = /^[0-9.]*,[0-9.]*,[0-9.]*$/;
+const SLICE_REGEX = new RegExp(`^${FLOAT_REGEX.source},${FLOAT_REGEX.source},${FLOAT_REGEX.source}$`);
+
 /**
  * Matches a sequence of three comma-separated min:max number pairs, representing
  * the x, y, and z axes.
  */
-const REGION_REGEX = /^([0-9.]*:[0-9.]*)(,[0-9.]*:[0-9.]*){2}$/;
+const REGION_REGEX = new RegExp(
+  `^(${FLOAT_REGEX.source}:${FLOAT_REGEX.source})(,${FLOAT_REGEX.source}:${FLOAT_REGEX.source}){2}$`
+);
 
 const HEX_COLOR_REGEX = new RegExp(`(([0-9a-fA-F]{6})|${DEFAULT_CONTROL_POINT_COLOR_CODE})`);
-const NUMERIC_REGEX = /-?[0-9.]*/;
-const CONTROL_POINT_REGEX = new RegExp(`(${NUMERIC_REGEX.source}:${NUMERIC_REGEX.source}:${HEX_COLOR_REGEX.source})`);
+
+/** Represents control points specified by bin indices. */
+const CONTROL_POINT_REGEX = new RegExp(`(${FLOAT_REGEX.source}:${FLOAT_REGEX.source}:${HEX_COLOR_REGEX.source})`);
 
 const HEX_COLOR_STR_REGEX = new RegExp(`^${HEX_COLOR_REGEX.source}$`);
 
 /**
  * LEGACY: Matches a COMMA-separated list of control points, where each control point is represented
  * by a triplet of `{x}:{opacity}:{hex color}`.
- * The hex color can be replaced with `w` to represent white (`ffffff`).
+ * The hex color can be replaced with `1` to represent white (`ffffff`).
  */
 export const LEGACY_CONTROL_POINTS_REGEX = new RegExp(
   `^${CONTROL_POINT_REGEX.source}(,${CONTROL_POINT_REGEX.source})*$`
 );
+
 /**
- * Matches a COLON-separated list of control points, where each control point is represented
- * by a triplet of `{x}:{opacity}:{hex color}`.
- * The hex color can be replaced with `w` to represent white (`ffffff`).
+ * Matches a COLON-separated list of control points, where each control point is
+ * represented by a triplet of `{x}:{opacity}:{hex color}`.
+ * - `x` is a value that will either be parsed as a histogram bin index (legacy,
+ *   for `ControlPointsLegacy`) or intensity value (for `ControlPoints`),
+ *   depending on on which field is being parsed.
+ * - Opacity is a float in the [0, 1] range.
+ * - The hex color is a 6-digit hex color (e.g. `ffeecc`), and can be replaced
+ *   with `1` to represent white (`ffffff`).
  */
 export const CONTROL_POINTS_REGEX = new RegExp(`^${CONTROL_POINT_REGEX.source}(:${CONTROL_POINT_REGEX.source})*$`);
 
@@ -91,6 +97,10 @@ export enum ViewerStateKeys {
   Time = "t",
   Scene = "scene",
   CameraState = "cam",
+  SingleChannelMode = "scm",
+  SingleChannelIndex = "sci",
+  UseExactScaleLevel = "esl",
+  ScaleLevelIndex = "scl",
 }
 
 export enum CameraTransformKeys {
@@ -115,12 +125,15 @@ export enum ViewerChannelSettingKeys {
   ColorizeAlpha = "cza",
   IsosurfaceAlpha = "isa",
   Lut = "lut",
-  Ramp = "rmp",
-  ControlPoints = "cps",
+  ControlPoints = "cpt",
+  ControlPointsLegacy = "cps",
+  Ramp = "ram",
+  RampLegacy = "rmp",
   ControlPointsEnabled = "cpe",
   VolumeEnabled = "ven",
   SurfaceEnabled = "sen",
   IsosurfaceValue = "isv",
+  KeepRange = "pin",
 }
 
 /**
@@ -163,12 +176,24 @@ export class ViewerChannelSettingParams {
    */
   [ViewerChannelSettingKeys.Lut]?: string = undefined;
   /**
-   * Control points for the transfer function. If provided, overrides the
-   * `lut` field when calculating the control points. Should be a list
-   * of `x:opacity:color` triplets, separated by colon.
+   * Legacy specifier for control points for the transfer function as a list of
+   * `x:opacity:color` triplets, separated by colon. Uses histogram bin indices
+   * instead of intensity values.
+   * - `x` is a histogram bin index in the [0, 255] range.
+   * - `opacity` is a float in the [0, 1] range.
+   * - `color` is a 6-digit hex color, e.g. `ff0000`.
+   *
+   * Will be overridden by the ControlPoints field (`cpt`) if provided.
+   */
+  [ViewerChannelSettingKeys.ControlPointsLegacy]?: string = undefined;
+  /**
+   * Control points for the transfer function, formatted as a list of
+   * `x:opacity:color` triplets, separated by colons.
    * - `x` is a numeric intensity value.
    * - `opacity` is a float in the [0, 1] range.
    * - `color` is a 6-digit hex color, e.g. `ff0000`.
+   *
+   * If provided, overrides the `lut` field when calculating the control points.
    */
   [ViewerChannelSettingKeys.ControlPoints]?: string = undefined;
   /**
@@ -177,8 +202,14 @@ export class ViewerChannelSettingParams {
    */
   [ViewerChannelSettingKeys.ControlPointsEnabled]?: "1" | "0" = undefined;
   /**
-   * Raw ramp values, which should be two numeric values separated by a colon.
-   * If provided, overrides the `lut` field when calculating the ramp values.
+   * Legacy specifier for the transfer function ramp which uses histogram bin
+   * indices instead of intensity values, formatted as `min:max`. Will be
+   * overridden by the Ramp field (`ram`) if provided.
+   */
+  [ViewerChannelSettingKeys.RampLegacy]?: string = undefined;
+  /**
+   * Ramp min and max intensity values (`min:max`). If provided, overrides the
+   * `lut` field when calculating the ramp.
    */
   [ViewerChannelSettingKeys.Ramp]?: string = undefined;
   /** Volume enabled. "1" is enabled. Disabled by default. */
@@ -187,6 +218,11 @@ export class ViewerChannelSettingParams {
   [ViewerChannelSettingKeys.SurfaceEnabled]?: "1" | "0" = undefined;
   /** Isosurface value, in the [0, 255] range. Set to `128` by default. */
   [ViewerChannelSettingKeys.IsosurfaceValue]?: string = undefined;
+  /**
+   * Whether to keep the current contrast settings when loading a new volume.
+   * "1" is enabled. Disabled by default.
+   */
+  [ViewerChannelSettingKeys.KeepRange]?: "1" | "0" = undefined;
 }
 /**
  * Channels, matching the pattern `c0`, `c1`, etc. corresponding to the index of the channel being configured.
@@ -212,6 +248,10 @@ export class ViewerStateParams {
   [ViewerStateKeys.Axes]?: string = undefined;
   /** Whether to show the bounding box. "1" is enabled. Disabled by default. */
   [ViewerStateKeys.BoundingBox]?: string = undefined;
+  /** Whether single-channel mode is active. "1" is active. Inactive by default. */
+  [ViewerStateKeys.SingleChannelMode]?: string = undefined;
+  /** If single-channel mode is active, which channel index is shown. Defaults to 0. */
+  [ViewerStateKeys.SingleChannelIndex]?: string = undefined;
   /** The color of the bounding box, as a 6-digit hex color. */
   [ViewerStateKeys.BoundingBoxColor]?: string = undefined;
   /** The background color, as a 6-digit hex color. */
@@ -242,6 +282,10 @@ export class ViewerStateParams {
   [ViewerStateKeys.Time]?: string = undefined;
   /** Scene number, for multiscene images. 0 by default. */
   [ViewerStateKeys.Scene]?: string = undefined;
+  /** Whether to use an exact scale level index. 0 by default. */
+  [ViewerStateKeys.UseExactScaleLevel]?: string = undefined;
+  /** The exact scale level index to use, if `UseExactScaleLevel` is 1. 0 by default. */
+  [ViewerStateKeys.ScaleLevelIndex]?: string = undefined;
   /**
    * Camera transform settings, as a list of `key:value` pairs separated by commas.
    * Valid keys are defined in `CameraTransformKeys`:
@@ -260,8 +304,15 @@ export class ViewerStateParams {
 /** URL parameters that define data sources when loading volumes. */
 class DataParams {
   /**
-   * One or more volume URLs to load. If multiple URLs are provided, they should
-   * be separated by commas.
+   * One or more volume URLs to load.
+   *
+   * This parameter may represent a single image with multiple data sources by delimiting each source URL with `,`.
+   * It may also represent multiple scenes by delimiting each scene URL (and/or each collection of multiple
+   * `,`-delimited source URLs) with `+`. E.g. `url1+url2,url3` represents a collection of two scenes, where the first
+   * scene comes from `url1` and the second is a combination of the channels from the images at `url2` and `url3`.
+   *
+   * When parsing, we do our best to account for `%`-encoding, including the possibility that each source/scene URL was
+   * encoded separately, then concatenated with the proper delimiters, then encoded again.
    */
   url?: string = undefined;
   /**
@@ -272,14 +323,24 @@ class DataParams {
    * See `ManifestJson` for the type definition.
    */
   manifest?: string = undefined;
-  /**
-   * The name of a dataset in the Cell Feature Explorer database. Used with `id`.
-   */
+  /** The name of a dataset in the Cell Feature Explorer database. Used with `id`. */
   dataset?: string = undefined;
-  /**
-   * The ID of a cell within the loaded dataset. Used with `dataset`.
-   */
+  /** The ID of a cell within the loaded dataset. Used with `dataset`. */
   id?: string = undefined;
+  /** The key of a collection of scenes stored in local storage. Overrides `url`. */
+  collectionid?: string = undefined;
+  /**
+   * The origin of an opening window that wants to send a message to this window.
+   *
+   * The presence of this param implies that this window has just been opened by another app, and the opening app has
+   * more data to send. Until that message is received, we fall back to `url`. Once that message arrives, the scenes to
+   * open are written to local storage at a new `collectionid` and `msgorigin` is removed, allowing the window to
+   * switch to reading local storage.
+   *
+   * All this happens independently of URL parsing, so the only meaningful thing this parsing code does with this param
+   * is check whether it is present.
+   */
+  msgorigin?: string = undefined;
 }
 
 class DeprecatedParams {
@@ -292,6 +353,19 @@ class DeprecatedParams {
 }
 
 type AppParams = Partial<ViewerStateParams & DataParams & DeprecatedParams & ChannelParams>;
+
+/**
+ * A message sent from an external application after this app was opened,
+ * containing data that was too large to pack into the URL.
+ */
+type ViewerMessage = {
+  /** A (possibly very long) list of scene URLs. */
+  scenes?: string[];
+  /** A (likely very large) list of metadata records for each scene. */
+  meta?: Record<string, MetadataRecord>;
+  /** The scene to open once this message arrives. */
+  sceneIndex?: number;
+};
 
 const allowedParamKeys: Array<keyof AppParams> = [
   ...Object.keys(new ViewerStateParams()),
@@ -317,29 +391,52 @@ export function getAllowedParams(searchParams: URLSearchParams): AppParams {
   return result;
 }
 
-const decodeURL = (url: string): string => {
-  const decodedUrl = decodeURIComponent(url);
-  return decodedUrl.endsWith("/") ? decodedUrl.slice(0, -1) : decodedUrl;
+/** Tries to retrieve the given `param` from a `search` string without using `URLSearchParams`, to avoid decoding. */
+const getSearchParamRaw = (search: string, param: string): string | undefined => {
+  const trimmedSearch = search.startsWith("?") ? search.slice(1) : search;
+  const entries = trimmedSearch.split("&");
+  const key = param + "=";
+  const foundKeyValue = entries.find((keyValue) => keyValue.startsWith(key));
+  return foundKeyValue?.slice(key.length);
 };
 
-/** Try to parse a `string` as a list of 2 or more URLs. Returns `undefined` if the string is not a valid URL list. */
-const tryDecodeURLList = (url: string, delim: string | RegExp = ","): string[] | undefined => {
-  if (typeof delim === "string" ? !url.includes(delim) : !delim.test(url)) {
-    return undefined;
-  }
-
-  const urls = url.split(delim).map((u) => decodeURL(u));
-
-  // Verify that all urls are valid
-  for (const u of urls) {
+/**
+ * Applies `decodeURIComponent` over and over until `url` either seems to be a valid `URL` or satisfies `condition`.
+ */
+const decodeURLUntilParseable = (url: string, condition = (_url: string) => false): string => {
+  let decoded = url;
+  while (!condition(decoded) && !URL.canParse(decoded)) {
     try {
-      new URL(u);
-    } catch (_e) {
-      return undefined;
+      const nextDecoded = decodeURIComponent(decoded);
+      if (nextDecoded === decoded) {
+        return decoded;
+      }
+      decoded = nextDecoded;
+    } catch {
+      return decoded;
     }
   }
+  return decoded;
+};
 
-  return urls;
+/** Parses the `url` query param into a 2D URL array: one or more scenes, with one or more sources per scene. */
+export const parseImageURLParam = (urlParam: string): string[][] => {
+  // Decode until either any valid delimiters appear or `urlParam` is parseable as a single URL.
+  const decodedScenes = decodeURLUntilParseable(urlParam, (url) => /[+ ,]/.test(url));
+  // Split into scene URLs.
+  const sceneUrls = decodedScenes.split(/[+ ]/);
+
+  return sceneUrls.map((scene) => {
+    // Split each scene into multiple sources, if any.
+    const decodedSources = decodeURLUntilParseable(scene, (url) => url.includes(","));
+    const sourceUrls = decodedSources.split(",");
+    if (sourceUrls.length === 1) {
+      return sourceUrls;
+    }
+
+    // Try to make sure the source URLs are decoded as well.
+    return sourceUrls.map((source) => decodeURLUntilParseable(source));
+  });
 };
 
 //// DATA PARSING //////////////////////
@@ -652,13 +749,13 @@ function parseControlPoints(controlPoints: string | undefined): ControlPoint[] |
   }
 
   // Parse raw control point data from the string into an array of [x, opacity, color] triplets.
-  let rawControlPointData: string[][];
+  let controlPointStrings: string[][];
   if (LEGACY_CONTROL_POINTS_REGEX.test(controlPoints)) {
     // Legacy format uses commas to separate control points.
-    rawControlPointData = controlPoints.split(",").map((cp) => cp.split(":"));
+    controlPointStrings = controlPoints.split(",").map((cp) => cp.split(":"));
   } else {
     // New format is all colon-separated, where every three elements represent a control point.
-    rawControlPointData = controlPoints.split(":").reduce((acc, _val, i, array) => {
+    controlPointStrings = controlPoints.split(":").reduce((acc, _val, i, array) => {
       if ((i + 1) % 3 === 0) {
         acc.push([array[i - 2], array[i - 1], array[i]]);
       }
@@ -666,7 +763,7 @@ function parseControlPoints(controlPoints: string | undefined): ControlPoint[] |
     }, [] as string[][]);
   }
 
-  const newControlPoints = rawControlPointData.map((cp) => {
+  const newControlPoints = controlPointStrings.map((cp) => {
     const [x, opacity, color] = cp;
     return {
       x: parseStringFloat(x, -Infinity, Infinity) ?? 0,
@@ -695,7 +792,8 @@ export function deserializeViewerChannelSetting(
     match: channelIndex,
     enabled: parseStringBoolean(jsonState[ViewerChannelSettingKeys.VolumeEnabled]),
     surfaceEnabled: parseStringBoolean(jsonState[ViewerChannelSettingKeys.SurfaceEnabled]),
-    isovalue: parseStringFloat(jsonState[ViewerChannelSettingKeys.IsosurfaceValue], 0, 255),
+    isovalue: parseStringFloat(jsonState[ViewerChannelSettingKeys.IsosurfaceValue], -Infinity, Infinity),
+    keepIntensityRange: parseStringBoolean(jsonState[ViewerChannelSettingKeys.KeepRange]),
     surfaceOpacity: parseStringFloat(jsonState[ViewerChannelSettingKeys.IsosurfaceAlpha], 0, 1),
     colorizeEnabled: parseStringBoolean(jsonState[ViewerChannelSettingKeys.Colorize]),
     colorizeAlpha: parseStringFloat(jsonState[ViewerChannelSettingKeys.ColorizeAlpha], 0, 1),
@@ -706,14 +804,31 @@ export function deserializeViewerChannelSetting(
   }
   if (jsonState[ViewerChannelSettingKeys.Lut] && LUT_REGEX.test(jsonState.lut)) {
     const [min, max] = jsonState[ViewerChannelSettingKeys.Lut].split(":");
-    result.lut = [min.trim(), max.trim()];
+    result.intensity = { ...result.intensity, lut: [min.trim(), max.trim()] };
   }
-  if (jsonState[ViewerChannelSettingKeys.Ramp] && RAMP_REGEX.test(jsonState.rmp)) {
-    const [min, max] = jsonState[ViewerChannelSettingKeys.Ramp].split(":");
-    result.ramp = [Number.parseFloat(min), Number.parseFloat(max)];
+
+  if (jsonState[ViewerChannelSettingKeys.Ramp]) {
+    if (RAMP_REGEX.test(jsonState[ViewerChannelSettingKeys.Ramp])) {
+      const [min, max] = jsonState[ViewerChannelSettingKeys.Ramp].split(":");
+      result.intensity = { ...result.intensity, ramp: [Number.parseFloat(min), Number.parseFloat(max)] };
+    }
+  } else if (jsonState[ViewerChannelSettingKeys.RampLegacy]) {
+    if (RAMP_REGEX.test(jsonState[ViewerChannelSettingKeys.RampLegacy])) {
+      const [min, max] = jsonState[ViewerChannelSettingKeys.RampLegacy].split(":");
+      result.ramp = [Number.parseFloat(min), Number.parseFloat(max)];
+    }
   }
+
   if (jsonState[ViewerChannelSettingKeys.ControlPoints]) {
-    result.controlPoints = parseControlPoints(jsonState[ViewerChannelSettingKeys.ControlPoints]);
+    const parsedResult = parseControlPoints(jsonState[ViewerChannelSettingKeys.ControlPoints]);
+    if (parsedResult) {
+      result.intensity = { ...result.intensity, controlPoints: parsedResult };
+    }
+  } else if (jsonState[ViewerChannelSettingKeys.ControlPointsLegacy]) {
+    const parsedResult = parseControlPoints(jsonState[ViewerChannelSettingKeys.ControlPointsLegacy]);
+    if (parsedResult) {
+      result.controlPoints = parsedResult;
+    }
   }
   return result;
 }
@@ -743,11 +858,8 @@ export function serializeViewerChannelSetting(
     [ViewerChannelSettingKeys.ControlPoints]:
       channelSetting.controlPoints && serializeControlPoints(channelSetting.controlPoints),
     [ViewerChannelSettingKeys.ControlPointsEnabled]: serializeBoolean(channelSetting.useControlPoints),
-    [ViewerChannelSettingKeys.Ramp]: channelSetting.ramp
-      ?.map((value) => {
-        return formatFloat(value);
-      })
-      .join(":"),
+    [ViewerChannelSettingKeys.Ramp]: channelSetting.ramp?.join(":"),
+    [ViewerChannelSettingKeys.KeepRange]: serializeBoolean(channelSetting.keepIntensityRange),
     // Note that Lut is not saved here, as it is expected as user input and is redundant with
     // the control points and ramp.
   });
@@ -771,6 +883,10 @@ export function deserializeViewerState(params: ViewerStateParams): Partial<Viewe
     time: parseStringInt(params[ViewerStateKeys.Time], 0, Number.POSITIVE_INFINITY),
     scene: parseStringInt(params[ViewerStateKeys.Scene], 0, Number.POSITIVE_INFINITY),
     renderMode: parseStringEnum(params[ViewerStateKeys.Mode], RenderMode),
+    singleChannelMode: parseStringBoolean(params[ViewerStateKeys.SingleChannelMode]),
+    singleChannelIndex: parseStringInt(params[ViewerStateKeys.SingleChannelIndex], 0, Number.POSITIVE_INFINITY),
+    useExactScaleLevel: parseStringBoolean(params[ViewerStateKeys.UseExactScaleLevel]),
+    scaleLevelIndex: parseStringInt(params[ViewerStateKeys.ScaleLevelIndex], 0, Number.MAX_SAFE_INTEGER),
     cameraState: parseCameraState(params[ViewerStateKeys.CameraState]),
   };
 
@@ -805,6 +921,10 @@ export function deserializeViewerState(params: ViewerStateParams): Partial<Viewe
 export function serializeViewerState(state: Partial<ViewerState>, removeDefaults: boolean): ViewerStateParams {
   if (removeDefaults) {
     state = removeMatchingProperties(state, getDefaultViewerState());
+    // special case: if there's an explicit scale level but it's not being used, no reason to include it
+    if (state.scaleLevelIndex !== undefined && state.useExactScaleLevel === undefined) {
+      delete state.scaleLevelIndex;
+    }
   }
   const result: ViewerStateParams = {
     [ViewerStateKeys.Mode]: state.renderMode,
@@ -823,6 +943,10 @@ export function serializeViewerState(state: Partial<ViewerState>, removeDefaults
     [ViewerStateKeys.Levels]: state.levels?.join(","),
     [ViewerStateKeys.Time]: state.time?.toString(),
     [ViewerStateKeys.Scene]: state.scene?.toString(),
+    [ViewerStateKeys.SingleChannelMode]: serializeBoolean(state.singleChannelMode),
+    [ViewerStateKeys.SingleChannelIndex]: state.singleChannelIndex?.toString(),
+    [ViewerStateKeys.UseExactScaleLevel]: serializeBoolean(state.useExactScaleLevel),
+    [ViewerStateKeys.ScaleLevelIndex]: state.scaleLevelIndex?.toString(),
     [ViewerStateKeys.CameraState]:
       state.cameraState && serializeCameraState(state.cameraState as CameraState, removeDefaults, state.viewMode),
   };
@@ -1001,25 +1125,24 @@ export async function loadFromManifest(
 
 /**
  * Parses a set of URL search parameters into props for the viewer.
- * @param urlSearchParams The URLSearchParams object to parse.
- * @param firestore Optional Firestore instance. If provided, the function can
- * load data from a Firestore dataset if the `dataset` and `id` parameters are
- * provided.
+ * @param search The query string to parse, which must be valid in the `URLSearchParams constructor
+ * @param firestore Optional Firestore instance. If provided, the function can load data from a
+ * Firestore dataset if the `dataset` and `id` parameters are provided.
  * @returns An object containing:
  * - `args`: Partial AppProps object.
  * - `viewerSettings`: Partial ViewerState object.
  *
- * `args` can be passed as props to the `ImageViewerApp`, and `viewerSettings`
- * can be passed to `ViewerStateProvider`.
+ * `args` can be passed as props to the `ImageViewerApp`, and `viewerSettings` can be passed to `ViewerStateProvider`.
  */
 export async function parseViewerUrlParams(
-  urlSearchParams: URLSearchParams,
+  search: string,
   firestore?: FirebaseFirestore
 ): Promise<{
   args: Partial<AppProps>;
   viewerSettings: Partial<ViewerState>;
 }> {
-  const params = getAllowedParams(urlSearchParams);
+  const searchParams = new URLSearchParams(search);
+  const params = getAllowedParams(searchParams);
   let args: Partial<AppProps> = {};
   // Parse viewer state
   const viewerSettings: Partial<ViewerState> = deserializeViewerState(params);
@@ -1031,7 +1154,7 @@ export async function parseViewerUrlParams(
   args.viewerChannelSettings = channelSettings ?? deprecatedChannelSettings;
 
   // Parse data sources (URL or dataset/id pair)
-  if (params.manifest !== undefined || params.url !== undefined) {
+  if (params.manifest !== undefined || params.url !== undefined || params.collectionid !== undefined) {
     let scenes: (string | string[])[];
 
     if (params.manifest) {
@@ -1039,17 +1162,13 @@ export async function parseViewerUrlParams(
       scenes = manifestScenes;
       args.metadata = manifestMetadata ?? undefined;
     } else {
-      // Load from URL
-      const getFromStorage = params.url === URL_FETCH_FROM_STORAGE;
-      const urlParam = getFromStorage ? (localStorage.getItem("url") ?? params.url!) : params.url!;
-      // split encoded url into a list of one or more scenes...
-      const sceneUrls = tryDecodeURLList(urlParam, /[+ ]/) ?? [urlParam];
-      // ...and each scene into a list of multiple sources, if any.
-      scenes = sceneUrls.map((scene) => tryDecodeURLList(scene) ?? decodeURL(scene));
-      if (getFromStorage) {
-        const metadataJson = localStorage.getItem("meta");
-        args.metadata = metadataJson !== null ? JSON.parse(metadataJson) : undefined;
-      }
+      // Load from URL or storage
+      const { collectionid, msgorigin } = params;
+      const getFromStorage = collectionid !== undefined && msgorigin === undefined;
+      const urlParamFromStorage = getFromStorage ? readStoredScenes(collectionid) : undefined;
+      const urlParam = urlParamFromStorage ?? getSearchParamRaw(search, "url")!;
+      scenes = parseImageURLParam(urlParam);
+      args.metadata = readStoredMetadata(scenes);
     }
 
     const firstScene = scenes[0];
@@ -1090,16 +1209,45 @@ export async function parseViewerUrlParams(
   return { args: removeUndefinedProperties(args), viewerSettings: removeUndefinedProperties(viewerSettings) };
 }
 
+/** Adds the data in a newly-arrived `ViewerMessage` to an existing stored `AppProps` instance. */
+export function addViewerParamsFromMessage<P extends Pick<AppProps, "imageUrl" | "metadata">>(
+  args: P,
+  message: ViewerMessage
+): P {
+  // get scenes
+  const { imageUrl } = args;
+  const scenes = message.scenes ?? (typeof imageUrl === "string" ? [imageUrl] : imageUrl.scenes);
+  const firstScene = scenes[0];
+  const newImageUrl = scenes.length === 1 && typeof firstScene === "string" ? firstScene : { scenes };
+
+  // get metadata
+  const { meta } = message;
+  const messageMeta =
+    meta &&
+    scenes.map((scene) => {
+      if (Array.isArray(scene)) {
+        // can't handle multi-source scenes (yet)
+        return undefined;
+      }
+
+      return meta[scene] as MetadataRecord | undefined;
+    });
+  const newMetadata = messageMeta ?? args.metadata;
+
+  if (newMetadata === undefined) {
+    return { ...args, imageUrl: newImageUrl };
+  } else {
+    return { ...args, imageUrl: newImageUrl, metadata: newMetadata };
+  }
+}
+
 /**
  * Serializes the ViewerState and ChannelState of a ViewerStateContext into a URLSearchParams object.
  * @param state ViewerStateContext to serialize.
  * @param removeDefaults If true, shortens parameters by removing any properties that match the default state.
  * This includes the output of GET_DEFAULT_VIEWER_STATE and GET_DEFAULT_CHANNEL_STATE.
  */
-export function serializeViewerUrlParams(
-  state: Partial<ViewerStateContextType>,
-  removeDefaults: boolean = true
-): AppParams {
+export function serializeViewerUrlParams(state: Partial<ViewerStore>, removeDefaults: boolean = true): AppParams {
   const params = serializeViewerState(state, removeDefaults);
 
   const channelParams = state.channelSettings?.reduce<Record<string, string>>(

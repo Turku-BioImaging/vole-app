@@ -1,6 +1,6 @@
 import { type CameraState, type Channel, PrefetchDirection } from "@aics/vole-core";
 
-import type { ChannelState, ViewerState } from "../components/ViewerStateProvider/types";
+import type { ChannelState, ViewerState } from "../state/types";
 import { ImageType, RenderMode, ViewMode } from "./enums";
 import type { AxisName } from "./types";
 import type { ColorArray } from "./utils/colorRepresentations";
@@ -20,14 +20,14 @@ export const // Control panel will automatically close if viewport is less than 
   // and linearly increase intensity up to the LUT_MAX_PERCENTILE fraction of pixels.
   LUT_MIN_PERCENTILE = 0.5,
   LUT_MAX_PERCENTILE = 0.983,
-  ISOSURFACE_OPACITY_SLIDER_MAX = 255.0,
   ALPHA_MASK_SLIDER_DEFAULT = 0,
   BRIGHTNESS_SLIDER_LEVEL_DEFAULT = 70,
   DENSITY_SLIDER_LEVEL_DEFAULT = 50,
   LEVELS_SLIDER_DEFAULT: ColorArray = [35.0, 140.0, 255.0],
   INTERPOLATION_ENABLED_DEFAULT = true,
   OTHER_CHANNEL_KEY = "Other",
-  SINGLE_GROUP_CHANNEL_KEY = "Channels";
+  SINGLE_GROUP_CHANNEL_KEY = "Channels",
+  SINGLE_CHANNEL_MODE_COLOR: ColorArray = [255, 255, 255];
 
 export const TFEDITOR_DEFAULT_COLOR: ColorArray = [255, 255, 255];
 export const TFEDITOR_MAX_BIN = 255;
@@ -185,6 +185,10 @@ export const getDefaultViewerState = (): ViewerState => ({
   slice: { x: 0.5, y: 0.5, z: 0.5 },
   time: 0,
   scene: 0,
+  singleChannelMode: false,
+  singleChannelIndex: 0,
+  useExactScaleLevel: false,
+  scaleLevelIndex: 0,
   // Do not override camera position, target, etc. by default;
   // instead, let the viewer apply default camera settings based on the view mode.
   // This prevents a bug where the camera's position and view mode are set to
@@ -224,5 +228,6 @@ export const getDefaultChannelState = (index: number = 0): ChannelState => {
     ],
     plotMin: 0,
     plotMax: TFEDITOR_MAX_BIN,
+    keepIntensityRange: false,
   };
 };

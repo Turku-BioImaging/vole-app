@@ -8,7 +8,7 @@ You can include none or all of these parameters in the URL. If a parameter is
 not specified, the listed default value will be used instead.
 
 If you are using our public build, set
-[`https://volumeviewer.allencell.org/viewer`](https://volumeviewer.allencell.org/viewer)
+[`https://vole.allencell.org/viewer`](https://vole.allencell.org/viewer)
 as the base address. If you are running Vol-E locally, you can substitute this
 for a `localhost` address.
 
@@ -25,19 +25,31 @@ for a `localhost` address.
 The `url` parameter specifies the HTTPS URL of one or more volume to be loaded.
 Supported formats include OME-Zarr and OME-TIFF files.
 
-Multiple volumes can be loaded by including commas between each URL, and will
-appear in the viewer as a single volume with all channels appended. This
-requires all volumes to have **some resolution/scale where the dimensions
-match.** The viewer will throw an error if there is no match possible.
+This parameter can take a list of multiple URLs, with different behavior
+depending on the delimiters used:
+
+- Multiple URLs separated by _commas_ (`,`) will appear in the viewer as a
+  single volume with all channels appended. This requires all volumes to have
+  **some resolution/scale where the dimensions match.** The viewer will throw
+  an error if there is no match possible.
+- Multiple URLs separated by _plus signs_ (`+`) will appear in the viewer as
+  multiple volumes in a sequence of "scenes" which can be browsed using the
+  Scene slider in the bottom clipping panel.
+
+Both styles can be combined in a single URL list. For instance, the value
+`{url1}+{url2},{url3}` will result in a viewer session with two scenes, one
+using volume channels from `{url1}` and one using the combined volume channels
+from both `{url2}` and `{url3}`.
 
 URLs containing special characters (`?`, `#`, `&`, or `,`) must be first encoded
 using
 [`encodeURIComponent`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent).
 
-| Query Parameters                | Description                                                                  | Example                                                                                      |
-| ------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `?url={url}`                    | Load a volume from the specified URL.                                        | `?url=https://example.com/data/example1.ome.zarr`                                            |
-| `?url={url1},{url2},{url3},...` | Load multiple volumes from multiple URLs, appending their channels together. | `?url=https://example.com/data/example1.ome.zarr,https://example.com/data/example2.ome.zarr` |
+| Query Parameters                | Description                                                                                                   | Example                                                                                      |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `?url={url}`                    | Load a volume from the specified URL.                                                                         | `?url=https://example.com/data/example1.ome.zarr`                                            |
+| `?url={url1},{url2},{url3},...` | Load multiple volumes from multiple URLs, appending their channels together.                                  | `?url=https://example.com/data/example1.ome.zarr,https://example.com/data/example2.ome.zarr` |
+| `?url={url1}+{url2}+{url3}+...` | Load multiple volumes from multiple URLs, presenting each as different "scenes" in a single image collection. | `?url=https://example.com/data/example1.ome.zarr+https://example.com/data/example2.ome.zarr` |
 
 ## View settings
 
@@ -60,6 +72,10 @@ General global settings for the viewer.
 | `reg`           | Subregions per axis (XYZ order).                                                                                      | Three `min:max` number pairs separated by commas in a `[0,1]` range, in XYZ order. | `0:1,0:1,0:1` | `?reg=0:0.5,0:0.5,0:0.5`        |
 | `slice`         | Slice position along each axis to show if the view mode is set to `X`, `Y`, or `Z`.                                   | Three floats, separated by commas, in XYZ order.                                   | `0.5,0.5,0.5` | `?slice=0.5,0.5,0.5`            |
 | `t`             | Frame number, for time-series volumes.                                                                                | Integer                                                                            | `0`           | `?t=10`                         |
+| `scm`           | Whether single channel mode is enabled.                                                                               | `1` (enabled) or `0` (disabled)                                                    | `0`           | `?scm=1`                        |
+| `sci`           | The index of the isolated channel when single channel mode is enabled.                                                | Integer                                                                            | `0`           | `?sci=3`                        |
+| `esl`           | Whether to use the resolution level specified by `scl` or an automatically chosen one.                                | `1` (manual) or `0` (automatic)                                                    | `0`           | `?esl=1`                        |
+| `scl`           | Which scale level index to use in manual resolution mode.                                                             | Integer                                                                            | `0`           | `?scl=3`                        |
 | `cam`           | Camera transform settings, with one or more properties separated by commas.                                           | [_See 'Camera transform settings'_](#camera-transform-settings-cam)                |               | `?cam=pos:1:2:3,tar:4:5:6`      |
 | `c{n}`          | Channel settings for channel index `n`, with one or more properties separated by commas.                              | [_See 'Channel settings'_](#channel-settings-cn)                                   |               | `?c0=iso:1&c2=ven:1,col:ff23cc` |
 
@@ -98,45 +114,20 @@ property pair being separated by **commas**.
 > the volume and the colorize mode, sets the color to `#8da3c0`, and sets the
 > control points for the transfer function.
 
-| Property | Description                                                                               | Expected values                                                                                | Default                                | Example                             |
-| -------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------- |
-| `ven`    | Whether the volume is enabled.                                                            | `1` (enabled) or `0` (disabled)                                                                | `0` (`1` for the first three channels) | `?c0=ven:1`                         |
-| `sen`    | Whether the isosurface is enabled.                                                        | `1` (enabled) or `0` (disabled)                                                                | `0`                                    | `?c0=iso:1`                         |
-| `isv`    | Isosurface value, the intensity value at which to generate the isosurface.                | Number in the range `[0, 255]`                                                                 | `128`                                  | `?c0=isv:195`                       |
-| `col`    | Base channel color, applied to volumes and isosurfaces.                                   | 6-digit hex color                                                                              | (varies by index)                      | `?c0=col:af38c0`                    |
-| `clz`    | Colorize, used for segmentations where each ID should be a different color.               | `1` (enabled) or `0` (disabled)                                                                | `0`                                    | `?c0=clz:1`                         |
-| `cza`    | Colorize alpha, the opacity of the colorize effect.                                       | Number in the range `[0, 1]`                                                                   | `1.0`                                  | `?c0=cza:1.0`                       |
-| `isa`    | Isosurface alpha, the opacity of the isosurface.                                          | Number in the range `[0, 1]`                                                                   | `1.0`                                  | `?c0=isa:1.0`                       |
-| `cpe`    | Use and show the control points instead of the ramp on load.                              | `1` (enabled) or `0` (disabled)                                                                | `0`                                    | `?c0=cpe:1`                         |
-| `cps`    | Control points for the transfer function. If provided, overrides the `lut` field.         | List of `bin_index:opacity:color` triplets, separated by a colon ([_see 'Binning'_](#binning)) | `0:0:ffffff:255:1:ffffff`              | `?c0=cps:0:0:ff0000:150:0.5:ffff00` |
-| `rmp`    | Raw ramp values. If provided, overrides the `lut` field when calculating the ramp values. | Two float bin indices, formatted as `min:max` ([_see 'Binning'_](#binning))                    | `0:255`                                | `?c0=rmp:0:255`                     |
-| `lut`    | Lookup table (LUT) to map from volume intensity values to opacity.                        | [_See 'Lookup Table'_](#lookup-table-lut)                                                      | `0:255`                                | `?c0=lut:0:255`                     |
-
-### Binning
-
-When loaded, each channel's raw intensity values are sorted into one of 256
-bins, where the bin index `0` holds the minimum raw intensity value of the
-channel and the bin index `255` holds the maximum raw intensity value. Like any
-binned histogram, each bin can represent multiple values-- if there are more
-than 256 intensities in the channel, values will be evenly distributed across
-bins.
-
-Certain properties like `cps` (control points), `rmp` (ramp), and `lut` (lookup
-table) directly reference these bin indices.
-
-![Screenshot of Volume Viewer with a volume in advanced mode. A histogram with
-255 bins is visible, with a ramp increasing from 0 to 1 on the Y axis in the
-span of 53 to 136 on the X axis.](./assets/example_histogram.png)
-
-For example, the above control points are at bin indices `0`, `53`, `136`, and
-`255`. Depending on the range of the channel's values, these may
-represent different raw intensity pixel values.
-
-| Min raw intensity | Max raw intensity | Bin `0` intensity | Bin `53` intensity | Bin `136` intensity | Bin `255` intensity |
-| ----------------- | ----------------- | ----------------- | ------------------ | ------------------- | ------------------- |
-| 0                 | 255               | 0                 | 53                 | 136                 | 255                 |
-| 50                | 200               | 50                | 103                | 166                 | 200                 |
-| 45                | 1000              | 45-48             | 244-247            | 555-558             | 997-1000            |
+| Property | Description                                                                                | Expected values                                                        | Default                                | Example                             |
+| -------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------- | ----------------------------------- |
+| `ven`    | Whether the volume is enabled.                                                             | `1` (enabled) or `0` (disabled)                                        | `0` (`1` for the first three channels) | `?c0=ven:1`                         |
+| `sen`    | Whether the isosurface is enabled.                                                         | `1` (enabled) or `0` (disabled)                                        | `0`                                    | `?c0=sen:1`                         |
+| `isv`    | Isosurface value, the intensity value at which to generate the isosurface.                 | Number representing a data intensity value                             | (varies by data)                       | `?c0=isv:195`                       |
+| `col`    | Base channel color, applied to volumes and isosurfaces.                                    | 6-digit hex color                                                      | (varies by index)                      | `?c0=col:af38c0`                    |
+| `clz`    | Colorize, used for segmentations where each ID should be a different color.                | `1` (enabled) or `0` (disabled)                                        | `0`                                    | `?c0=clz:1`                         |
+| `cza`    | Colorize alpha, the opacity of the colorize effect.                                        | Number in the range `[0, 1]`                                           | `1.0`                                  | `?c0=cza:1.0`                       |
+| `isa`    | Isosurface alpha, the opacity of the isosurface.                                           | Number in the range `[0, 1]`                                           | `1.0`                                  | `?c0=isa:1.0`                       |
+| `cpe`    | Use and show the control points instead of the ramp on load.                               | `1` (enabled) or `0` (disabled)                                        | `0`                                    | `?c0=cpe:1`                         |
+| `cpt`    | Control points for the transfer function. If provided, overrides the `lut` field.          | List of `intensity_value:opacity:color` triplets, separated by a colon | `0:0:ffffff:255:1:ffffff`              | `?c0=cpt:0:0:ff0000:150:0.5:ffff00` |
+| `ram`    | Ramp values for the transfer function. If provided, overrides the `lut` field.             | Two float intensity values, formatted as `min:max`                     | `0:255`                                | `?c0=ram:0:255`                     |
+| `lut`    | Lookup table (LUT) to map from volume intensity values to opacity.                         | [_See 'Lookup Table'_](#lookup-table-lut)                              | `0:255`                                | `?c0=lut:0:255`                     |
+| `pin`    | Whether to keep contrast settings (isovalue, ramp, control points) when switching volumes. | `1` (enabled) or `0` (disabled)                                        | `0`                                    | `?c0=pin:1`                         |
 
 ### Lookup Table (`lut`)
 
@@ -145,7 +136,7 @@ represented by a `min:max` pair. Values between the `min` and `max` ramp
 linearly from an opacity of `0` to `1`. The `min` and `max` can match any of the
 following:
 
-- Plain numbers are treated as bin indices, in a `[0, 255]` range.
+- Unprefixed values are treated as bin indices, in a `[0, 255]` range. [See 'Binning'](#binning).
 - `v{n}` represents an image intensity value, where `n` is an integer.
 - `p{n}` represents a percentile, where `n` is a percentile in the `[0, 100]` range.
 - `m{n}` represents the volume's median intensity multiplied by `n / 100`.
@@ -164,3 +155,29 @@ Examples:
 | `p10:p95`   | Linear mapping from the 10th percentile to the 95th.       |
 | `m100:m150` | Linear mapping from the median to 1.5 times the median.    |
 | `autoij:0`  | Uses the "auto" algorithm from ImageJ.                     |
+
+### Binning
+
+If the `lut` (lookup table) is specified with unprefixed numbers, they are interpreted as histogram bins. (This is for legacy reasons and backward compatibility.)
+indices for legacy reasons.
+
+When loaded, each channel's raw intensity values are sorted into one of 256
+bins, where the bin index `0` holds the minimum raw intensity value of the
+channel and the bin index `255` holds the maximum raw intensity value. Like any
+binned histogram, each bin can represent multiple values-- if there are more
+than 256 intensities in the channel, values will be evenly distributed across
+bins.
+
+![Screenshot of Volume Viewer with a volume in advanced mode. A histogram with
+255 bins is visible, with a ramp increasing from 0 to 1 on the Y axis in the
+span of 53 to 136 on the X axis.](./assets/example_histogram.png)
+
+For example, the above LUT has control points at bin indices `0`, `53`, `136`,
+and `255`. Depending on the range of the channel's values, these may represent
+different raw intensity pixel values.
+
+| Min raw intensity | Max raw intensity | Bin `0` intensity | Bin `53` intensity | Bin `136` intensity | Bin `255` intensity |
+| ----------------- | ----------------- | ----------------- | ------------------ | ------------------- | ------------------- |
+| 0                 | 255               | 0                 | 53                 | 136                 | 255                 |
+| 50                | 200               | 50                | 103                | 166                 | 200                 |
+| 45                | 1000              | 45-48             | 244-247            | 555-558             | 997-1000            |
