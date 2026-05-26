@@ -28,7 +28,7 @@ export type UseVolumeOptions = {
   /** Callback for when a single channel of the volume has loaded. */
   onChannelLoaded?: (image: Volume, channelIndex: number, isInitialLoad: boolean) => void;
   /** Callback for when image loading encounters an error. */
-  onError?: (error: unknown) => void;
+  onError?: (error: unknown, image?: Volume) => void;
   /** The name of a channel which should be treated as a mask rather than as viewable data. */
   maskChannelName?: string;
 };
@@ -122,6 +122,7 @@ const useVolume = (
       setPlayingAxis(axis);
       // prioritize prefetching along the playing axis
       sceneLoader.setPrefetchPriority(axis ? [AXIS_TO_LOADER_PRIORITY[axis]] : []);
+      sceneLoader.updateFetchOptions({ onlyPriorityDirections: isPlaying });
       // sync multichannel loading so we don't show loaded channels one at a time
       sceneLoader.syncMultichannelLoading(isPlaying);
       if (image) {

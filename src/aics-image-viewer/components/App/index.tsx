@@ -54,6 +54,7 @@ const defaultVisibleControls: ControlVisibilityFlags = {
   showAxesButton: true,
   showBoundingBoxButton: true,
   metadataViewer: true,
+  scaleLevelControls: true,
 };
 
 const defaultProps: AppProps = {
@@ -158,7 +159,7 @@ const App: React.FC<AppProps> = (props) => {
 
   useEffect(() => {
     // Get notifications of loading errors which occur after the initial load, e.g. on time change or new channel load
-    view3d.setLoadErrorHandler((_vol, e) => showError(e));
+    view3d.setLoadErrorHandler((vol, e) => showError(e, vol));
     return () => view3d.setLoadErrorHandler(undefined);
   }, [view3d, showError]);
 
@@ -327,22 +328,21 @@ const App: React.FC<AppProps> = (props) => {
       // save the channel's new range for remapping next time
       channelRangesRef.current[channelIndex] = [thisChannel.rawMin, thisChannel.rawMax];
 
-      view3d.updateLuts(image);
+      // Note: updateLuts and updateActiveChannels are not called here because the
+      // channelVersion bump (via onChannelDataLoaded) will trigger ChannelUpdater
+      // effects that apply LUT/color settings and call updateLuts with the final state.
       view3d.onVolumeData(image, [channelIndex]);
 
       if (image.channelNames[channelIndex] === maskChannelName) {
         view3d.setVolumeChannelAsMask(image, channelIndex);
-      }
-      if (image.isLoaded()) {
-        view3d.updateActiveChannels(image);
       }
     },
     [view3d, changeChannelSetting, maskChannelName, props.viewerChannelSettings]
   );
 
   const onError = useCallback(
-    (error: unknown) => {
-      showError(error);
+    (error: unknown, image?: Volume) => {
+      showError(error, image);
       onImageTitleChange?.(undefined);
     },
     [showError, onImageTitleChange]
